@@ -20,8 +20,9 @@ build/
 .coverage
 htmlcov/
 
-# Streamlit 缓存
-.streamlit/
+# Streamlit 缓存与敏感信息
+.streamlit/secrets.toml
+.streamlit/*.json
 
 # IDE 配置文件
 .vscode/
@@ -35,3 +36,9 @@ htmlcov/
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# 日志与临时
+logs/
+.env
+.ruff_cache/
+.mypy_cache/
