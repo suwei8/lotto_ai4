@@ -142,7 +142,7 @@
   - 预聚合演进：expert_hit_stat 可平滑扩展字段（如最大连中、稳定性评分等）；前端以动态列适配
 
 - 技术栈与工程
-  - Python 3.11 + Streamlit 最新版
+  - Python 3.12 + Streamlit 最新版
   - Streamlit session_state 管理交互状态；组件扩展（自定义组件）丰富交互；st.cache_data 对数据查询与统计结果缓存
   - 代码规范：参数化 SQL；日志最小化（不落敏感数据）；错误边界明确
 
@@ -237,7 +237,7 @@ ORDER BY issue_name DESC;
 
 ### 7.1 版本信息
 - 系统版本：lotto_ai3_v2
-- 技术栈：Python 3.11 + Streamlit 最新版本 + MySQL 8.0
+- 技术栈：Python 3.12 + Streamlit 最新版本 + MySQL 8.0
 - 数据库范围：lotto_3d（福彩3D 独立库）
 - 文档状态：系统总体需求说明书（SRS）v2.0
 

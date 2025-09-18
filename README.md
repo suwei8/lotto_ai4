@@ -19,7 +19,7 @@
 
 ## 4. 系统架构概览
 - 前端层：基于 Streamlit 的交互式单页应用（SPA-style），承担筛选输入、结果渲染、图表展示与轻量交互。
-- 应用层：Python 3.11 实现查询组织、指标口径计算与缓存调度（含 `st.cache_data` 与 `st.cache_resource`）。
+- 应用层：Python 3.12 实现查询组织、指标口径计算与缓存调度（含 `st.cache_data` 与 `st.cache_resource`）。
 - 数据层：MySQL 8.0（当前使用库：`lotto_3d`）。  
 - 架构演进思路：多彩种 → 多库多站点。当前落地为福彩3D（`lotto_3d`），其他彩种可按同构模式平滑扩展。
 
@@ -44,7 +44,7 @@
 
 ## 7. 版本与部署
 - 推荐运行环境
-  - Python 3.11
+  - Python 3.12
   - Streamlit 1.49.0（latest）
   - MySQL 8.0
 - 部署方式
