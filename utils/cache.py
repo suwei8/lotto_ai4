@@ -1,34 +1,21 @@
-"""Streamlit caching utilities used across the application."""
-from __future__ import annotations
-
-from typing import Any, Callable, Optional, TypeVar
+import hashlib
+import json
 
 import streamlit as st
 
-F = TypeVar("F", bound=Callable[..., Any])
+
+def _make_key(sql: str, params: dict | None) -> str:
+    blob = json.dumps(
+        {"sql": sql, "params": params or {}}, sort_keys=True, ensure_ascii=False
+    )
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
-def cache_data(ttl: Optional[int] = 600, **kwargs: Any) -> Callable[[F], F]:
-    """A thin wrapper around :func:`streamlit.cache_data`.
+def cached_query(run_fn, sql: str, params: dict | None = None, ttl: int = 300):
+    key = _make_key(sql, params)
 
-    The wrapper applies a sensible default TTL and keeps the API consistent
-    across the codebase.  Additional keyword arguments are forwarded directly to
-    ``st.cache_data`` for fine-grained control when required.
+    @st.cache_data(ttl=ttl, show_spinner=False)
+    def _do(k: str):
+        return run_fn(sql, params)
 
-    Args:
-        ttl: Time-to-live for the cached data in seconds. ``None`` disables
-            expiration. Defaults to ``600`` seconds (10 minutes).
-        **kwargs: Additional options passed to :func:`streamlit.cache_data`.
-
-    Returns:
-        Callable: A decorator that can be applied to data loading functions.
-    """
-
-    def decorator(func: F) -> F:
-        cached_function = st.cache_data(ttl=ttl, **kwargs)(func)
-        return cached_function  # type: ignore[return-value]
-
-    return decorator
-
-
-__all__ = ["cache_data"]
+    return _do(key)
