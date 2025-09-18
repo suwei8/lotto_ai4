@@ -72,7 +72,7 @@
   - 位数判断通过 numbers 文本与 open_code 的数字位计数完成（应用层实现）。
 
 ## 3. 非功能性需求
-- 技术栈：Python 3.11 + Streamlit 最新版本
+- 技术栈：Python 3.12 + Streamlit 最新版本
 - 使用 Streamlit 的 session_state、组件扩展、st.cache_data 缓存优化交互与性能
 - 性能
   - 取数按条件索引：建议在 expert_predictions 建立 (issue_name, playtype_id, user_id) 或 (issue_name, playtype_id) 复合索引；在 lottery_results 建立 (issue_name) 索引。

@@ -77,7 +77,7 @@ HotCold（冷热分析）用于对近 N 期（或指定期段）的开奖号码�
   - 复用模块 B/C/D 结果
 
 ## 3. 非功能性需求
-- 技术栈：Python 3.11 + Streamlit 最新版本
+- 技术栈：Python 3.12 + Streamlit 最新版本
 - 使用 Streamlit 的 session_state、组件扩展、st.cache_data 等优化交互与性能
 - 性能
   - 读取近 N 期数据：通过 ORDER BY open_time DESC, issue_name DESC LIMIT N 获取；避免全表扫描

@@ -109,7 +109,7 @@
   - 为每个玩法构建一行供计算器使用
 
 ## 3. 非功能性需求
-- 技术栈：Python 3.11 + Streamlit 最新版本
+- 技术栈：Python 3.12 + Streamlit 最新版本
 - 使用 Streamlit 的 session_state、组件扩展、st.cache_data 等优化交互与性能
 - 性能
   - 建议索引：

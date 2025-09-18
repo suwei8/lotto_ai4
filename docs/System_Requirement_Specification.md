@@ -7,7 +7,7 @@
 - 固定彩种：福彩3D；免登录；只读权限；仅访问 lotto_3d
 - 禁用废弃对象：不使用旧表（如 dansha_result 等）与废弃字段（如 lottery_name、expert_predictions.playtype_name、expert_predictions.lottery_name）
 - 聚合优先读快表：优先使用 expert_hit_stat 提供的聚合指标，避免在大表 expert_predictions 上即席聚合
-- 统一技术栈：Python 3.11 + Streamlit 最新版，利用 session_state、组件扩展、st.cache_data 提升交互与性能
+- 统一技术栈：Python 3.12 + Streamlit 最新版，利用 session_state、组件扩展、st.cache_data 提升交互与性能
 
 ---
 

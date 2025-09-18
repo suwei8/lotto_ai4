@@ -85,7 +85,7 @@
 - 新数据库映射：无直接DB依赖；输入数据来自模块D的号码集合
 
 ## 3. 非功能性需求
-- 技术栈：Python 3.11 + Streamlit 最新版本
+- 技术栈：Python 3.12 + Streamlit 最新版本
 - 使用 Streamlit 的 session_state、组件扩展、st.cache_data 等优化交互与性能
 
 - 性能

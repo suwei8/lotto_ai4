@@ -63,7 +63,7 @@
   - lotto_3d.expert_info(user_id, nick_name)
 
 ## 3. 非功能性需求
-- 技术栈：Python 3.11 + Streamlit 最新版本
+- 技术栈：Python 3.12 + Streamlit 最新版本
 - 使用 Streamlit 的 session_state、组件扩展、st.cache_data 缓存优化交互与性能
 - 性能
   - 优先按期号筛选，避免全表扫描。

@@ -9,7 +9,7 @@
 * [ ] **初始化项目结构**
 
   * 目录：`pages/`, `utils/`, `db/`, `tests/`, `docs/`
-  * 配置 Python 3.11，使用 `requirements.txt` 或 `pyproject.toml`
+  * 配置 Python 3.12，使用 `requirements.txt` 或 `pyproject.toml`
   * 加入基础依赖：`streamlit`, `sqlalchemy`, `pandas`, `numpy`, `matplotlib`, `mysqlclient` 或 `pymysql`
 * [ ] **数据库连接层**
 

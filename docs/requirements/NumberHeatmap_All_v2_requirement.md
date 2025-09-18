@@ -44,7 +44,7 @@
   - 展示：热力图（数字×命中）、排行榜位置命中条形图
 
 ## 3. 非功能性需求
-- 技术栈：Python 3.11 + Streamlit 最新版本
+- 技术栈：Python 3.12 + Streamlit 最新版本
 - 使用 Streamlit 的 session_state、组件扩展、st.cache_data 等优化交互与性能
 - 性能
   - 建议索引：expert_predictions(issue_name, playtype_id), lottery_results(issue_name)
