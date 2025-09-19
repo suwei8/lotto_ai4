@@ -6,237 +6,195 @@ import streamlit as st
 
 from db.connection import query_db
 from utils.cache import cached_query
-from utils.data_access import fetch_playtypes
-from utils.sql import make_in_clause
-from utils.ui import (
-    dataframe_with_pagination,
-    display_issue_summary,
-    download_csv_button,
-    issue_range_selector,
+from utils.data_access import (
+    fetch_lottery_info,
+    fetch_playtypes_for_issue,
+    fetch_recent_issues,
 )
+from utils.numbers import count_hits, normalize_code, parse_tokens
+from utils.sql import make_in_clause
+from utils.ui import download_csv_button
 
+st.header("Expert Hit Top - 本期命中榜")
 
-def _load_rankings(
-    start_issue: str | None,
-    end_issue: str | None,
-    playtype_names: list[str],
-    limit: int,
-):
-    playtype_clause, playtype_params = make_in_clause(
-        "s.playtype_name", playtype_names, "pt"
-    )
-    sql = f"""
-        SELECT
-            s.user_id,
-            COALESCE(info.nick_name, CONCAT('专家', s.user_id)) AS nick_name,
-            s.playtype_name,
-            s.total_count,
-            s.hit_count,
-            s.hit_number_count,
-            s.avg_hit_gap,
-            ROUND(CASE WHEN s.total_count = 0 THEN 0 ELSE s.hit_count / s.total_count END, 4) AS hit_rate
-        FROM expert_hit_stat s
-        LEFT JOIN expert_info info ON info.user_id = s.user_id
-        WHERE (:start_issue IS NULL OR s.issue_name >= :start_issue)
-          AND (:end_issue IS NULL OR s.issue_name <= :end_issue)
-          AND {playtype_clause}
-        ORDER BY hit_rate DESC, s.hit_count DESC, s.avg_hit_gap ASC
-        LIMIT :limit
-    """
-    params: dict[str, object] = {
-        "start_issue": start_issue,
-        "end_issue": end_issue,
-        "limit": int(limit),
-        **playtype_params,
-    }
-    return cached_query(query_db, sql, params=params, ttl=300)
+issues = fetch_recent_issues(limit=200)
+if not issues:
+    st.warning("无法获取期号列表，请检查数据库连接。")
+    st.stop()
 
+selected_issue = st.selectbox("期号", options=issues)
 
-def _load_detail(
-    user_id: str,
-    playtype_name: str,
-    start_issue: str | None,
-    end_issue: str | None,
-):
-    sql = """
-        SELECT
-            p.issue_name,
-            p.numbers,
-            r.open_code,
-            r.open_time
-        FROM expert_predictions p
-        JOIN lottery_results r ON r.issue_name = p.issue_name
-        WHERE p.user_id = :user_id
-          AND (:start_issue IS NULL OR p.issue_name >= :start_issue)
-          AND (:end_issue IS NULL OR p.issue_name <= :end_issue)
-          AND p.playtype_id = (
-              SELECT d.playtype_id
-              FROM playtype_dict d
-              WHERE d.playtype_name = :playtype_name
-              LIMIT 1
-          )
-        ORDER BY p.issue_name DESC
-        LIMIT 500
-    """
-    params = {
-        "user_id": user_id,
-        "playtype_name": playtype_name,
-        "start_issue": start_issue,
-        "end_issue": end_issue,
-    }
-    return cached_query(query_db, sql, params=params, ttl=300)
+lottery = fetch_lottery_info(selected_issue)
+if lottery:
+    col_code, col_sum, col_span = st.columns(3)
+    col_code.metric("开奖号码", lottery.get("open_code") or "未开奖")
+    col_sum.metric("和值", lottery.get("sum", "-"))
+    col_span.metric("跨度", lottery.get("span", "-"))
+else:
+    st.warning("未能获取该期的开奖信息。")
 
-
-def _mark_hit(numbers: str | None, open_code: str | None) -> bool:
-    if not numbers or not open_code:
-        return False
-    cleaned_target = open_code.replace(" ", "").replace(",", "").strip()
-    candidates = [
-        candidate.replace(" ", "").replace(",", "").strip()
-        for candidate in numbers.replace("|", ",").split(",")
-        if candidate.strip()
-    ]
-    return cleaned_target in candidates
-
-
-st.header("Expert Hit Top - 专家命中排行榜")
-
-start_issue, end_issue, _ = issue_range_selector("expert_hit_top", default_window=30)
-
-playtype_df = fetch_playtypes()
-if playtype_df.empty:
-    st.warning("无法获取玩法字典，排行榜功能不可用。")
+playtypes_df = fetch_playtypes_for_issue(selected_issue)
+if playtypes_df.empty:
+    st.info("当前期未找到可用玩法。")
     st.stop()
 
 playtype_map = {
-    str(row.playtype_id): row.playtype_name for row in playtype_df.itertuples()
+    int(row.playtype_id): row.playtype_name for row in playtypes_df.itertuples()
 }
-selected_ids = st.multiselect(
-    "选择玩法",
+selected_playtypes = st.multiselect(
+    "玩法",
     options=list(playtype_map.keys()),
     default=list(playtype_map.keys()),
-    format_func=lambda value: playtype_map.get(value, value),
+    format_func=lambda pid: playtype_map.get(pid, str(pid)),
 )
-selected_names = [playtype_map.get(value, value) for value in selected_ids]
-if not selected_names:
+
+if not selected_playtypes:
     st.warning("请至少选择一个玩法。")
     st.stop()
 
-col_topn, col_sort, col_order = st.columns(3)
-with col_topn:
-    top_n = st.slider("Top N", min_value=20, max_value=500, value=50, step=10)
-with col_sort:
-    sort_field = st.selectbox(
-        "排序指标",
-        options=[
-            ("hit_rate", "命中率"),
-            ("hit_count", "命中次数"),
-            ("total_count", "预测次数"),
-            ("avg_hit_gap", "平均命中间隔"),
-        ],
-        format_func=lambda item: item[1],
-    )[0]
-with col_order:
-    sort_ascending = (
-        st.radio(
-            "排序方式",
-            options=[("desc", "降序"), ("asc", "升序")],
-            format_func=lambda item: item[1],
-            horizontal=True,
-        )[0]
-        == "asc"
-    )
+playtype_clause, playtype_params = make_in_clause(
+    "p.playtype_id", selected_playtypes, "pt"
+)
+
+sql_predictions = f"""
+    SELECT p.user_id, p.playtype_id, p.numbers
+    FROM expert_predictions p
+    WHERE p.issue_name = :issue
+      AND {playtype_clause}
+"""
+params = {"issue": selected_issue, **playtype_params}
 
 try:
-    rows = _load_rankings(start_issue, end_issue, selected_names, top_n)
+    prediction_rows = cached_query(query_db, sql_predictions, params=params, ttl=120)
 except Exception as exc:
-    st.warning(f"查询排行榜失败：{exc}")
+    st.warning(f"加载本期推荐失败：{exc}")
+    prediction_rows = []
+
+if not prediction_rows:
+    st.info("当前期暂无推荐数据。")
     st.stop()
 
-if not rows:
-    st.info("在当前条件下未找到排行榜数据。")
-    st.stop()
+prediction_df = pd.DataFrame(prediction_rows)
+prediction_df["tokens"] = prediction_df["numbers"].apply(parse_tokens)
+prediction_df["playtype_name"] = prediction_df["playtype_id"].map(playtype_map)
 
-frame = pd.DataFrame(rows)
-frame.sort_values(by=sort_field, ascending=sort_ascending, inplace=True)
-frame.reset_index(drop=True, inplace=True)
-
-st.success(f"共加载 {len(frame)} 条专家统计记录。")
-
-subset, _, _ = dataframe_with_pagination(
-    frame, page_size=50, key_prefix="expert_hit_top"
-)
-st.dataframe(subset, use_container_width=True)
-
-download_csv_button(frame, label="下载排行榜 CSV", key="expert_hit_top_rankings")
-display_issue_summary(start_issue, end_issue)
-
-chart = (
-    alt.Chart(frame)
-    .mark_bar()
-    .encode(
-        x=alt.X("nick_name:N", sort="-y", title="专家"),
-        y=alt.Y("hit_rate:Q", title="命中率"),
-        color="playtype_name:N",
-        tooltip=["user_id", "nick_name", "hit_rate", "hit_count", "total_count"],
+open_code_clean = normalize_code((lottery or {}).get("open_code")) if lottery else ""
+if open_code_clean:
+    prediction_df["is_hit"] = prediction_df["tokens"].apply(
+        lambda tokens: count_hits(tokens, open_code_clean) > 0
     )
-    .properties(width="container", height=400)
-)
-st.altair_chart(chart, use_container_width=True)
+    hits_df = prediction_df[prediction_df["is_hit"]].copy()
+else:
+    st.warning("缺少开奖号码，无法判定命中专家。")
+    hits_df = pd.DataFrame(
+        columns=["user_id", "playtype_id", "playtype_name", "numbers"]
+    )
 
-st.subheader("玩法命中热力图")
-playtype_pivot = (
-    frame.groupby("playtype_name")[["hit_rate", "hit_count", "total_count"]]
-    .agg({"hit_rate": "mean", "hit_count": "sum", "total_count": "sum"})
-    .reset_index()
-)
-if not playtype_pivot.empty:
-    pivot_long = playtype_pivot.rename(
-        columns={
-            "hit_rate": "平均命中率",
-            "hit_count": "命中次数",
-            "total_count": "预测次数",
-        }
-    ).melt(id_vars="playtype_name", var_name="指标", value_name="数值")
+if hits_df.empty:
+    st.info("本期暂无命中专家。")
+else:
+    user_clause, user_params = make_in_clause(
+        "user_id", hits_df["user_id"].unique(), "user"
+    )
+    nick_rows = cached_query(
+        query_db,
+        f"SELECT user_id, nick_name FROM expert_info WHERE {user_clause}",
+        params=user_params,
+        ttl=300,
+    )
+    nick_map = {row["user_id"]: row.get("nick_name") for row in nick_rows}
 
-    pivot_chart = (
-        alt.Chart(pivot_long)
-        .mark_rect()
-        .encode(
-            x=alt.X("playtype_name:N", title="玩法"),
-            y=alt.Y("指标:N"),
-            color=alt.Color("数值:Q", scale=alt.Scale(scheme="blues")),
-            tooltip=["playtype_name", "指标", alt.Tooltip("数值:Q", format=".4f")],
+    playtype_names = hits_df["playtype_name"].unique().tolist()
+    pt_clause, pt_params = make_in_clause("playtype_name", playtype_names, "ptname")
+    stat_params = {**user_params, **pt_params}
+    stats_rows = cached_query(
+        query_db,
+        f"""
+        SELECT user_id, playtype_name, SUM(hit_count) AS total_hit_count
+        FROM expert_hit_stat
+        WHERE {user_clause} AND {pt_clause}
+        GROUP BY user_id, playtype_name
+        """,
+        params=stat_params,
+        ttl=300,
+    )
+    stats_map = {
+        (row["user_id"], row["playtype_name"]): row.get("total_hit_count", 0)
+        for row in stats_rows
+    }
+
+    hits_df["nick_name"] = hits_df["user_id"].map(nick_map)
+    hits_df["total_hit_count"] = hits_df.apply(
+        lambda row: stats_map.get((row["user_id"], row["playtype_name"]), 0),
+        axis=1,
+    )
+
+    st.subheader("命中 AI 专家")
+    col_expert, col_records, col_playtypes = st.columns(3)
+    col_expert.metric("命中专家数", hits_df["user_id"].nunique())
+    col_records.metric("命中记录数", len(hits_df))
+    col_playtypes.metric("涉及玩法数", hits_df["playtype_id"].nunique())
+
+    hits_view = hits_df[
+        [
+            "user_id",
+            "nick_name",
+            "playtype_name",
+            "numbers",
+            "total_hit_count",
+        ]
+    ].copy()
+    hits_view.columns = [
+        "user_id",
+        "nick_name",
+        "玩法",
+        "本期推荐数字",
+        "全期命中次数",
+    ]
+    st.dataframe(hits_view, use_container_width=True)
+    download_csv_button(hits_view, "下载命中专家", "expert_hit_top_hits")
+
+st.subheader("本期玩法命中率热力图")
+if not open_code_clean:
+    st.info("缺少开奖号码，无法计算命中率。")
+else:
+    total_counts = (
+        prediction_df.groupby("playtype_id")["numbers"]
+        .count()
+        .reset_index(name="total")
+    )
+    hit_counts = (
+        prediction_df[prediction_df.get("is_hit", False)]
+        .groupby("playtype_id")["numbers"]
+        .count()
+        .reset_index(name="hit")
+    )
+    rate_df = total_counts.merge(hit_counts, how="left", on="playtype_id").fillna(0)
+    rate_df["hit_rate"] = rate_df.apply(
+        lambda row: row["hit"] / row["total"] if row["total"] else 0,
+        axis=1,
+    )
+    rate_df["playtype_name"] = rate_df["playtype_id"].map(playtype_map)
+
+    if rate_df.empty():
+        st.info("暂无命中率数据。")
+    else:
+        heatmap = (
+            alt.Chart(rate_df)
+            .mark_bar()
+            .encode(
+                x=alt.X("playtype_name:N", title="玩法"),
+                y=alt.Y("hit_rate:Q", title="命中率", axis=alt.Axis(format="%")),
+                color=alt.Color(
+                    "hit_rate:Q", title="命中率", scale=alt.Scale(scheme="greens")
+                ),
+                tooltip=[
+                    "playtype_name",
+                    alt.Tooltip("hit_rate:Q", format=".2%", title="命中率"),
+                    alt.Tooltip("hit:Q", title="命中数量"),
+                    alt.Tooltip("total:Q", title="推荐数量"),
+                ],
+            )
+            .properties(width="container", height=320)
         )
-        .properties(width="container", height=240)
-    )
-    st.altair_chart(pivot_chart, use_container_width=True)
-else:
-    st.info("暂无玩法聚合数据。")
-
-st.subheader("专家逐期明细")
-selected_user_id = st.selectbox(
-    "选择专家（按 user_id）",
-    options=frame["user_id"].astype(str).tolist(),
-)
-selected_playtype = frame.loc[
-    frame["user_id"].astype(str) == selected_user_id, "playtype_name"
-].iloc[0]
-
-try:
-    detail_rows = _load_detail(
-        selected_user_id, selected_playtype, start_issue, end_issue
-    )
-except Exception as exc:
-    st.warning(f"加载专家明细失败：{exc}")
-    detail_rows = []
-
-if detail_rows:
-    detail_df = pd.DataFrame(detail_rows)
-    detail_df["is_hit"] = detail_df.apply(
-        lambda row: _mark_hit(row.get("numbers"), row.get("open_code")), axis=1
-    )
-    st.dataframe(detail_df, use_container_width=True)
-    download_csv_button(detail_df, label="下载专家详情", key="expert_hit_top_detail")
-else:
-    st.info("暂无专家明细数据。")
+        st.altair_chart(heatmap, use_container_width=True)

@@ -27,7 +27,6 @@ UserExpertHitStat.py
 UserHitAnalysis.py
 Userid_Query.py
 Xuanhao_3D_P3.py
-Diagnostics.py
 ```
 
 ## 快速开始
@@ -51,7 +50,7 @@ Diagnostics.py
 
 启动后首页会执行 `SELECT 1` 检查数据库连通性，并自动列出所有页面入口。
 若数据库暂不可达，页面会给出提示但仍可浏览静态结构。
-`Diagnostics` 页面可随时查看数据库版本、表清单并执行一键探活脚本。
+首页（app.py）提供系统诊断视图，可查看数据库版本、表清单并执行探活脚本。
 
 ## 测试
 - 单元测试（默认跳过真实数据库）：
