@@ -132,7 +132,7 @@ pyproject.toml         # black / ruff / pytest 统一配置
 
 项目包含多个分析报告和工具文件，用于数据库分析、代码质量评估和系统维护：
 
-### 数据库分析工具
+### 数据库分析工具 (analysis_tools/)
 - `analyze_db.py` - 数据库连接和基础分析脚本
 - `detailed_analysis.py` - 详细的数据库结构和数据统计分析
 - `mysql_mcp_config.json` - MySQL MCP工具配置文件
@@ -140,11 +140,12 @@ pyproject.toml         # black / ruff / pytest 统一配置
 - `mysql_mcp_cli.py` - MySQL MCP命令行工具接口
 - `mysql_mcp_usage.md` - MySQL MCP工具使用说明
 
-### 代码质量报告
+### 代码质量报告 (reports/)
 - `code_quality_report.md` - 代码质量分析报告
 - `code_quality_improvement_report.md` - 代码质量改进建议和结果
 - `project_architecture_analysis.md` - 项目架构分析报告
 - `cleanup_report.md` - 项目垃圾文件清理报告
+- `project_organization_summary.md` - 项目文件组织总结报告
 
 ### 开发工具配置
 - `pyproject.toml` - Black、Ruff和Pytest的统一配置
