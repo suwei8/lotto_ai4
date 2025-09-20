@@ -1,214 +1,540 @@
 from __future__ import annotations
 
+import re
+from collections import Counter
+from typing import Dict, Iterable, List, Sequence, Tuple
+
 import altair as alt
 import pandas as pd
 import streamlit as st
 
 from db.connection import query_db
 from utils.cache import cached_query
-from utils.data_access import fetch_playtypes
-from utils.numbers import count_hits, parse_tokens
-from utils.ui import (
-    dataframe_with_pagination,
-    display_issue_summary,
-    download_csv_button,
-    issue_range_selector,
+from utils.data_access import (
+    fetch_lottery_info,
+    fetch_playtypes,
 )
+from utils.numbers import match_prediction_hit, normalize_code, parse_tokens
+from utils.sql import make_in_clause
 
-st.header("UserExpertHitStat - 专家命中统计")
 
-start_issue, end_issue, available_issues = issue_range_selector(
-    "user_expert_hit_stat", default_window=30
-)
+st.set_page_config(page_title="AI 命中统计分析", layout="wide")
+st.header("UserExpertHitStat - AI 命中表现分析")
+st.caption("固定彩种：福彩3D")
 
-selected_issue_subset = st.multiselect(
-    "指定统计期号（可多选，留空则使用上方区间）",
-    options=available_issues,
-    default=available_issues[:5],
-    help="多选用于精准控制统计窗口；如不选择则按上方期号区间统计。",
-)
-
-playtypes = fetch_playtypes()
-if playtypes.empty:
-    st.warning("玩法字典为空，无法进行统计分析。")
-    st.stop()
-
-labels = {str(row.playtype_id): row.playtype_name for row in playtypes.itertuples()}
-playtype_choice = st.selectbox(
-    "选择玩法",
-    options=list(labels.keys()),
-    format_func=lambda value: labels.get(value, value),
-)
-selected_playtype_name = labels.get(playtype_choice, playtype_choice)
-
-col_min_hit, col_min_rate, col_limit = st.columns(3)
-with col_min_hit:
-    min_hit_count = st.number_input("最少命中次数", min_value=0, value=5, step=1)
-with col_min_rate:
-    min_hit_rate = st.slider(
-        "最低命中率", min_value=0.0, max_value=1.0, step=0.01, value=0.2
-    )
-with col_limit:
-    top_limit = st.slider("Top N", min_value=20, max_value=500, step=10, value=200)
-
-filters = ["s.playtype_name = :playtype_name"]
-params = {
-    "playtype_name": selected_playtype_name,
-    "min_hit": int(min_hit_count),
-    "min_rate": float(min_hit_rate),
-    "limit": int(top_limit),
+# --------- 常量与辅助配置 ---------
+POSITIONAL_PLAYTYPES: Dict[str, int] = {
+    "百位定3": 0,
+    "十位定3": 1,
+    "个位定3": 2,
+    "百位定1": 0,
+    "十位定1": 1,
+    "个位定1": 2,
+    "定位3*3*3-百位": 0,
+    "定位3*3*3-十位": 1,
+    "定位3*3*3-个位": 2,
+    "定位4*4*4-百位": 0,
+    "定位4*4*4-十位": 1,
+    "定位4*4*4-个位": 2,
+    "定位5*5*5-百位": 0,
+    "定位5*5*5-十位": 1,
+    "定位5*5*5-个位": 2,
+    "万位杀3": 0,
+    "千位杀3": 1,
+    "百位杀3": 2,
+    "十位杀3": 3,
+    "个位杀3": 4,
+    "万位杀1": 0,
+    "千位杀1": 1,
+    "百位杀1": 2,
+    "十位杀1": 3,
+    "个位杀1": 4,
+    "万位定5": 0,
+    "千位定5": 1,
+    "百位定5": 2,
+    "十位定5": 3,
+    "个位定5": 4,
+    "万位定3": 0,
+    "千位定3": 1,
+    "万位定1": 0,
+    "千位定1": 1,
 }
 
-if selected_issue_subset:
-    issue_placeholders = ", ".join(
-        [":issue_" + str(idx) for idx in range(len(selected_issue_subset))]
+PLAYTYPE_DICT = fetch_playtypes()
+PLAYTYPE_NAME_TO_ID: Dict[str, int] = (
+    {row.playtype_name: int(row.playtype_id) for row in PLAYTYPE_DICT.itertuples()}
+    if not PLAYTYPE_DICT.empty
+    else {}
+)
+PLAYTYPE_ID_TO_NAME: Dict[int, str] = (
+    {int(row.playtype_id): row.playtype_name for row in PLAYTYPE_DICT.itertuples()}
+    if not PLAYTYPE_DICT.empty
+    else {}
+)
+
+
+# --------- 数据查询辅助函数 ---------
+
+def fetch_stat_issues() -> List[str]:
+    rows = cached_query(
+        query_db,
+        "SELECT DISTINCT issue_name FROM expert_hit_stat ORDER BY issue_name DESC",
+        params=None,
+        ttl=120,
     )
-    filters.append(f"s.issue_name IN ({issue_placeholders})")
-    params.update(
-        {f"issue_{idx}": issue for idx, issue in enumerate(selected_issue_subset)}
+    return [str(row["issue_name"]) for row in rows]
+
+
+def fetch_playtypes_for_issue(issue: str) -> List[Tuple[int, str]]:
+    rows = cached_query(
+        query_db,
+        """
+        SELECT DISTINCT s.playtype_id AS pid, d.playtype_name AS pname
+        FROM expert_hit_stat s
+        JOIN playtype_dict d ON d.playtype_id = s.playtype_id
+        WHERE s.issue_name = :issue
+        ORDER BY s.playtype_id
+        """,
+        params={"issue": issue},
+        ttl=120,
     )
-else:
-    filters.append("(:start_issue IS NULL OR s.issue_name >= :start_issue)")
-    filters.append("(:end_issue IS NULL OR s.issue_name <= :end_issue)")
-    params.update({"start_issue": start_issue, "end_issue": end_issue})
+    return [
+        (int(row["pid"]), row.get("pname") or PLAYTYPE_ID_TO_NAME.get(int(row["pid"]), str(row["pid"])))
+        for row in rows
+    ]
 
-where_clause = " AND ".join(filters)
 
-sql = f"""
-    SELECT
-        s.user_id,
-        COALESCE(info.nick_name, CONCAT('专家', s.user_id)) AS nick_name,
-        SUM(s.total_count) AS total_count,
-        SUM(s.hit_count) AS hit_count,
-        SUM(s.hit_number_count) AS hit_number_count,
-        AVG(s.avg_hit_gap) AS avg_hit_gap,
-        ROUND(SUM(s.hit_count) / NULLIF(SUM(s.total_count), 0), 4) AS hit_rate
-    FROM expert_hit_stat s
-    LEFT JOIN expert_info info ON info.user_id = s.user_id
-    WHERE {where_clause}
-    GROUP BY s.user_id, info.nick_name
-    HAVING SUM(s.hit_count) >= :min_hit
-       AND ROUND(SUM(s.hit_count) / NULLIF(SUM(s.total_count), 0), 4) >= :min_rate
-    ORDER BY hit_rate DESC, hit_count DESC, total_count DESC
-    LIMIT :limit
-"""
+def fetch_hit_summary(issues: Sequence[str], playtype_id: int) -> pd.DataFrame:
+    if not issues:
+        return pd.DataFrame(columns=["user_id", "total_count", "hit_count", "hit_number_count"])
+    clause, params = make_in_clause("issue_name", issues, "issue")
+    params["playtype"] = int(playtype_id)
+    sql = f"""
+        SELECT user_id,
+               SUM(total_count) AS total_count,
+               SUM(hit_count) AS hit_count,
+               SUM(hit_number_count) AS hit_number_count
+        FROM expert_hit_stat
+        WHERE {clause} AND playtype_id = :playtype
+        GROUP BY user_id
+    """
+    rows = cached_query(query_db, sql, params=params, ttl=120)
+    return pd.DataFrame(rows)
 
-try:
+
+def fetch_nick_map(user_ids: Iterable[int]) -> Dict[int, str]:
+    ids = list(user_ids)
+    if not ids:
+        return {}
+    clause, params = make_in_clause("user_id", ids, "uid")
+    sql = f"SELECT user_id, nick_name FROM expert_info WHERE {clause}"
     rows = cached_query(query_db, sql, params=params, ttl=300)
-except Exception as exc:
-    st.warning(f"查询命中统计失败：{exc}")
+    return {int(row["user_id"]): row.get("nick_name") or "未知" for row in rows}
+
+
+def fetch_query_issues() -> List[str]:
+    sql = """
+        SELECT issue_name
+        FROM (
+            SELECT DISTINCT issue_name FROM expert_hit_stat
+            UNION
+            SELECT DISTINCT issue_name FROM expert_predictions
+        ) AS merged
+        ORDER BY issue_name DESC
+    """
+    rows = cached_query(query_db, sql, params=None, ttl=120)
+    return [str(row["issue_name"]) for row in rows]
+
+
+def fetch_last_hit_status(issue: str, playtype_id: int) -> Tuple[set[int], set[int]]:
+    rows = cached_query(
+        query_db,
+        """
+        SELECT user_id, hit_count
+        FROM expert_hit_stat
+        WHERE issue_name = :issue AND playtype_id = :playtype
+        """,
+        params={"issue": issue, "playtype": int(playtype_id)},
+        ttl=120,
+    )
+    hit_users = {int(row["user_id"]) for row in rows if row.get("hit_count", 0)}
+    miss_users = {int(row["user_id"]) for row in rows if not row.get("hit_count", 0)}
+    return hit_users, miss_users
+
+
+def fetch_predictions_for_users(issue: str, playtype_id: int, user_ids: Sequence[int]) -> pd.DataFrame:
+    ids = list(user_ids)
+    if not ids:
+        return pd.DataFrame(columns=["user_id", "numbers"])
+    clause, params = make_in_clause("user_id", ids, "uid")
+    params.update({"issue": issue, "playtype": int(playtype_id)})
+    sql = f"""
+        SELECT user_id, numbers
+        FROM expert_predictions
+        WHERE issue_name = :issue AND playtype_id = :playtype AND {clause}
+    """
+    rows = cached_query(query_db, sql, params=params, ttl=120)
+    return pd.DataFrame(rows)
+
+
+# --------- 页面主流程 ---------
+
+issues = fetch_stat_issues()
+if not issues:
+    st.warning("无法获取期号列表。")
     st.stop()
 
-if not rows:
-    st.info("未查询到符合条件的专家。")
+selected_issues = st.multiselect(
+    "📅 选择期号（默认全选）",
+    options=issues,
+    default=issues,
+)
+if not selected_issues:
+    st.warning("请至少选择一个期号。")
     st.stop()
 
-frame = pd.DataFrame(rows)
-frame.sort_values(by="hit_rate", ascending=False, inplace=True)
-frame.reset_index(drop=True, inplace=True)
-if "avg_hit_gap" in frame:
-    frame["avg_hit_gap"] = frame["avg_hit_gap"].fillna(0)
+first_issue = selected_issues[0]
+playtype_pairs = fetch_playtypes_for_issue(first_issue)
+if not playtype_pairs:
+    st.info("所选期号暂无玩法数据。")
+    st.stop()
 
-metrics = frame[["hit_count", "hit_number_count", "total_count"]].sum()
-col_metrics = st.columns(3)
-col_metrics[0].metric("累计命中次数", int(metrics.get("hit_count", 0)))
-col_metrics[1].metric("命中号码覆盖数", int(metrics.get("hit_number_count", 0)))
-col_metrics[2].metric("预测总次数", int(metrics.get("total_count", 0)))
+playtype_ids = [pid for pid, _ in playtype_pairs]
+playtype_name_map = {pid: name for pid, name in playtype_pairs}
 
-subset, _, _ = dataframe_with_pagination(
-    frame, page_size=50, key_prefix="user_expert_hit_stat"
+selected_playtype_id = st.selectbox(
+    "🎮 选择玩法",
+    options=playtype_ids,
+    format_func=lambda pid: playtype_name_map.get(pid, PLAYTYPE_ID_TO_NAME.get(pid, str(pid))),
 )
-st.dataframe(subset, use_container_width=True)
+selected_playtype_name = playtype_name_map.get(
+    selected_playtype_id, PLAYTYPE_ID_TO_NAME.get(selected_playtype_id, str(selected_playtype_id))
+)
 
-chart = (
-    alt.Chart(frame)
-    .mark_circle(size=60)
-    .encode(
-        x=alt.X("total_count:Q", title="预测期数"),
-        y=alt.Y("hit_rate:Q", title="命中率"),
-        size=alt.Size("hit_count:Q", title="命中次数"),
-        color=alt.Color(
-            "hit_rate:Q", title="命中率", scale=alt.Scale(scheme="tealblues")
-        ),
-        tooltip=["user_id", "nick_name", "hit_rate", "hit_count", "total_count"],
+if st.button("📊 分析 AI 命中表现"):
+    summary_df = fetch_hit_summary(selected_issues, selected_playtype_id)
+    if summary_df.empty:
+        st.info("所选条件下无命中统计数据。")
+    else:
+        summary_df["user_id"] = summary_df["user_id"].astype(int)
+        nick_map = fetch_nick_map(summary_df["user_id"].tolist())
+        summary_df["预测期数"] = summary_df["total_count"].fillna(0).astype(int)
+        summary_df["命中期数"] = summary_df["hit_count"].fillna(0).astype(int)
+        summary_df["命中数字数量"] = summary_df["hit_number_count"].fillna(0).astype(int)
+        summary_df["命中率"] = summary_df.apply(
+            lambda row: round(row["命中数字数量"] / row["预测期数"], 4)
+            if row["预测期数"]
+            else 0,
+            axis=1,
+        )
+        summary_df["AI昵称"] = summary_df["user_id"].map(nick_map).fillna("未知")
+        result_df = summary_df[
+            ["user_id", "AI昵称", "命中期数", "预测期数", "命中数字数量", "命中率"]
+        ].sort_values(by="命中率", ascending=False)
+        st.session_state["uehs_summary"] = {
+            "result": result_df.reset_index(drop=True),
+            "issues": list(selected_issues),
+            "playtype_id": int(selected_playtype_id),
+            "playtype_name": selected_playtype_name,
+            "playtype_options": playtype_pairs,
+        }
+
+if "uehs_summary" not in st.session_state:
+    st.stop()
+
+state = st.session_state["uehs_summary"]
+result_df: pd.DataFrame = state["result"]
+history_issues: List[str] = state["issues"]
+selected_playtype_id: int = state["playtype_id"]
+selected_playtype_name: str = state.get(
+    "playtype_name", PLAYTYPE_ID_TO_NAME.get(selected_playtype_id, str(selected_playtype_id))
+)
+playtype_pairs = state.get("playtype_options", [])
+if not playtype_pairs:
+    playtype_pairs = fetch_playtypes_for_issue(history_issues[0])
+
+st.markdown(f"### 📋 AI 命中表现统计表（共 {len(result_df)} 位）")
+if result_df.empty:
+    st.info("无统计数据。")
+    st.stop()
+
+# 分布统计 - 命中期数
+hit_counts = result_df["命中期数"].value_counts().sort_index()
+total_users = len(result_df)
+hit_lines = [
+    f"<b>命中期数 {val}</b>：{count} 人（占比 {round(count / total_users * 100, 2)}%）"
+    for val, count in hit_counts.items()
+]
+columns = [[], [], [], []]
+for idx, line in enumerate(hit_lines):
+    columns[idx % 4].append(line)
+block = "".join(
+    f"<div style='flex:1'>{'<br>'.join(col)}</div>" for col in columns if col
+)
+st.markdown("**命中期数分布统计：**", unsafe_allow_html=True)
+st.markdown(f"<div style='display:flex;gap:24px'>{block}</div>", unsafe_allow_html=True)
+
+# 分布统计 - 命中数字数量
+hit_num_counts = result_df["命中数字数量"].value_counts().sort_index()
+num_lines = [
+    f"<b>命中数字数量 {val}</b>：{count} 人（占比 {round(count / total_users * 100, 2)}%）"
+    for val, count in hit_num_counts.items()
+]
+columns2 = [[], [], [], []]
+for idx, line in enumerate(num_lines):
+    columns2[idx % 4].append(line)
+block2 = "".join(
+    f"<div style='flex:1'>{'<br>'.join(col)}</div>" for col in columns2 if col
+)
+st.markdown("**命中数字数量分布统计：**", unsafe_allow_html=True)
+st.markdown(f"<div style='display:flex;gap:24px'>{block2}</div>", unsafe_allow_html=True)
+
+st.dataframe(
+    result_df[["user_id", "AI昵称", "命中期数", "预测期数", "命中数字数量", "命中率"]],
+    use_container_width=True,
+    hide_index=True,
+)
+
+# --------- 推荐记录反查与可视化 ---------
+st.markdown("---")
+st.markdown("### 🔍 按命中条件筛选专家并反查推荐记录")
+
+hit_options = sorted(result_df["命中期数"].unique())
+num_hit_options = sorted(result_df["命中数字数量"].unique())
+selected_hit_values = st.multiselect(
+    "🎯 命中期数筛选",
+    options=hit_options,
+    default=hit_options,
+)
+selected_num_hit_values = st.multiselect(
+    "🎯 命中数字数量筛选",
+    options=num_hit_options,
+    default=num_hit_options,
+)
+hit_status_filter = st.radio(
+    "🎯 上期命中状态",
+    options=["不过滤", "上期命中", "上期未命中"],
+    horizontal=True,
+)
+
+query_issue_options = fetch_query_issues()
+if not query_issue_options:
+    query_issue_options = history_issues
+query_issue = st.selectbox("📅 查询期号", options=query_issue_options)
+
+query_playtype_ids = [pid for pid, _ in playtype_pairs]
+query_playtype_name_map = {pid: name for pid, name in playtype_pairs}
+default_index = query_playtype_ids.index(selected_playtype_id) if selected_playtype_id in query_playtype_ids else 0
+query_playtype_id = st.selectbox(
+    "🎮 查询玩法",
+    options=query_playtype_ids,
+    index=default_index,
+    format_func=lambda pid: query_playtype_name_map.get(pid, PLAYTYPE_ID_TO_NAME.get(pid, str(pid))),
+)
+query_playtype_name = query_playtype_name_map.get(
+    query_playtype_id, PLAYTYPE_ID_TO_NAME.get(query_playtype_id, str(query_playtype_id))
+)
+
+if st.button("📥 查询推荐记录"):
+    filtered = result_df[
+        result_df["命中期数"].isin(selected_hit_values)
+        & result_df["命中数字数量"].isin(selected_num_hit_values)
+    ]
+
+    if filtered.empty:
+        st.warning("当前筛选条件下没有专家。")
+        st.session_state.pop("uehs_records", None)
+    else:
+        # 上期命中筛选
+        if hit_status_filter != "不过滤":
+            try:
+                issue_idx = query_issue_options.index(query_issue)
+            except ValueError:
+                issue_idx = -1
+            last_issue = query_issue_options[issue_idx + 1] if issue_idx >= 0 and issue_idx + 1 < len(query_issue_options) else None
+            hit_users_last: set[int] = set()
+            miss_users_last: set[int] = set()
+            if last_issue:
+                hit_users_last, miss_users_last = fetch_last_hit_status(last_issue, query_playtype_id)
+            if hit_status_filter == "上期命中":
+                filtered = filtered[filtered["user_id"].isin(hit_users_last)]
+            else:
+                filtered = filtered[filtered["user_id"].isin(miss_users_last)]
+        if filtered.empty:
+            st.warning("筛选条件下无专家符合。")
+            st.session_state.pop("uehs_records", None)
+        else:
+            rec_df = fetch_predictions_for_users(
+                query_issue, query_playtype_id, filtered["user_id"].tolist()
+            )
+            st.session_state["uehs_records"] = {
+                "records": rec_df,
+                "issue": query_issue,
+                "playtype_id": int(query_playtype_id),
+                "playtype_name": query_playtype_name,
+                "nick_map": dict(zip(result_df["user_id"], result_df["AI昵称"])),
+            }
+
+if "uehs_records" in st.session_state:
+    record_state = st.session_state["uehs_records"]
+    rec_df: pd.DataFrame = record_state.get("records", pd.DataFrame())
+    issue_for_display: str = record_state.get("issue", "")
+    playtype_id_for_display: int = record_state.get("playtype_id", selected_playtype_id)
+    playtype_name_for_display: str = record_state.get(
+        "playtype_name",
+        PLAYTYPE_ID_TO_NAME.get(playtype_id_for_display, str(playtype_id_for_display)),
     )
-    .properties(width="container", height=400)
-)
-st.altair_chart(chart, use_container_width=True)
+    nick_map: Dict[int, str] = record_state.get("nick_map", {})
 
-gap_chart = (
-    alt.Chart(frame)
-    .mark_line(point=True)
-    .encode(
-        x=alt.X("nick_name:N", sort="-y", title="专家"),
-        y=alt.Y("avg_hit_gap:Q", title="平均命中间隔"),
-        tooltip=["user_id", "nick_name", "avg_hit_gap"],
+    if rec_df.empty:
+        st.info("筛选条件下未找到推荐记录。")
+    else:
+        rec_df["user_id"] = rec_df["user_id"].astype(int)
+        open_info = fetch_lottery_info(issue_for_display) or {}
+        open_code = open_info.get("open_code")
+        blue_code = open_info.get("blue_code")
+        has_open_code = bool(open_code)
+
+        st.markdown(f"### 📋 推荐记录（{issue_for_display} 期） - 共 {len(rec_df)} 条")
+        if has_open_code:
+            st.markdown("### 🧧 开奖信息", unsafe_allow_html=True)
+            st.markdown(
+                f"""
+                <div style='font-size: 18px; line-height: 1.6;'>
+                    🏆 <b>开奖号码：</b> <span style='color: green; font-weight: bold;'>{open_code}</span>
+                    <span style='margin-left: 32px;'>🔵 <b>蓝球：</b> <span style='color: blue; font-weight: bold;'>{blue_code or '无'}</span></span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        number_counter: Counter[str] = Counter()
+        for numbers in rec_df["numbers"]:
+            for token in parse_tokens(numbers):
+                number_counter.update(list(token))
+
+        if number_counter:
+            freq_df = (
+                pd.DataFrame(
+                    [{"数字": digit, "出现次数": count} for digit, count in number_counter.items()]
+                )
+                .sort_values("出现次数", ascending=False)
+                .reset_index(drop=True)
+            )
+            normalized_open = normalize_code(open_code) if open_code else ""
+            open_digits = list(normalized_open)
+            positional_index = POSITIONAL_PLAYTYPES.get(playtype_name_for_display)
+
+            def digit_hit(digit: str) -> bool:
+                if not has_open_code:
+                    return False
+                if positional_index is not None:
+                    digits_list = list(normalized_open)
+                    if positional_index < len(digits_list):
+                        return digit == digits_list[positional_index]
+                    return False
+                target_set = set(open_digits)
+                if blue_code:
+                    target_set.update(list(normalize_code(str(blue_code))))
+                return digit in target_set
+
+            freq_df["是否命中"] = freq_df["数字"].apply(lambda d: "✅" if digit_hit(d) else "")
+            hit_digit_count = int((freq_df["是否命中"] == "✅").sum())
+            st.markdown(
+                f"#### 🎯 推荐数字出现频次热力图（共 {len(freq_df)} 个数字，命中：{hit_digit_count} 个）"
+            )
+            chart = (
+                alt.Chart(freq_df)
+                .mark_bar()
+                .encode(
+                    x=alt.X("出现次数:Q", title="出现次数"),
+                    y=alt.Y("数字:N", sort=freq_df["数字"].tolist(), title="推荐数字", axis=alt.Axis(labelFontSize=14)),
+                    color=alt.condition(
+                        alt.datum.是否命中 == "✅",
+                        alt.value("#3498db"),
+                        alt.value("#e74c3c"),
+                    ),
+                    tooltip=["数字", "出现次数", "是否命中"],
+                )
+                .properties(height=min(40 * len(freq_df), 800))
+            )
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.info("暂无推荐数字统计数据。")
+
+        detail_rows: List[Dict[str, object]] = []
+        normalized_open_digits = set(list(normalize_code(open_code))) if open_code else set()
+        if blue_code:
+            normalized_open_digits.update(list(normalize_code(str(blue_code))))
+
+        for row in rec_df.itertuples():
+            uid = int(row.user_id)
+            numbers = row.numbers
+            digits = set("".join(parse_tokens(numbers)))
+            hit_digits = normalized_open_digits & digits if has_open_code else set()
+            if has_open_code:
+                is_hit = match_prediction_hit(playtype_name_for_display, numbers, open_code or "")
+            else:
+                is_hit = None
+            detail_rows.append(
+                {
+                    "user_id": uid,
+                    "AI昵称": nick_map.get(uid, "未知"),
+                    "推荐号码": numbers,
+                    "命中数量": len(hit_digits) if has_open_code else "-",
+                    "是否命中": "✅" if is_hit else ("❌" if is_hit is False else "-"),
+                }
+            )
+
+        detail_df = pd.DataFrame(detail_rows)
+        if has_open_code and not detail_df.empty:
+            detail_df = detail_df.sort_values(by="命中数量", ascending=False)
+        st.markdown("### 📋 推荐详情表格")
+        st.dataframe(detail_df.reset_index(drop=True), use_container_width=True)
+
+        st.markdown("### 🧮 号码组合统计")
+        combo_counter = Counter(rec_df["numbers"])
+        combo_df = (
+            pd.DataFrame(combo_counter.items(), columns=["号码组合", "出现次数"])
+            .sort_values("出现次数", ascending=False)
+            .reset_index(drop=True)
+        )
+        digits_options = [str(i) for i in range(10)]
+        exclude_digits = st.multiselect("🚫 排除包含以下数字的组合", digits_options)
+        include_digits = st.multiselect("✅ 仅保留包含以下数字的组合", digits_options)
+        search_keywords = st.text_input(
+            "🔍 搜索包含数字（多个数字可用逗号分隔）",
+            help="模糊匹配组合中包含的数字，不限制顺序",
+        )
+
+        def should_keep(combo: str) -> bool:
+            parts = set(combo.split(","))
+            if exclude_digits and any(d in parts for d in exclude_digits):
+                return False
+            if include_digits and not all(d in parts for d in include_digits):
+                return False
+            if search_keywords:
+                keywords = re.findall(r"\d", search_keywords)
+                if not all(k in parts for k in keywords):
+                    return False
+            return True
+
+        filtered_combo_df = combo_df[combo_df["号码组合"].apply(should_keep)]
+        st.markdown(f"#### 📋 号码组合统计（共 {len(filtered_combo_df)} 个）")
+        st.dataframe(filtered_combo_df.reset_index(drop=True), use_container_width=True)
+
+# Top20 柱状图
+st.markdown("---")
+chart_df = result_df[["AI昵称", "命中期数"]].head(20)
+if not chart_df.empty:
+    chart = (
+        alt.Chart(chart_df)
+        .mark_bar()
+        .encode(
+            x=alt.X("AI昵称", sort="-y"),
+            y=alt.Y("命中期数"),
+            tooltip=["AI昵称", "命中期数"],
+        )
+        .properties(width="container", height=360, title="🎯 命中期数 Top 20")
     )
-    .properties(width="container", height=260)
-)
-st.altair_chart(gap_chart, use_container_width=True)
-
-download_csv_button(frame, label="下载命中统计", key="user_expert_hit_stat")
-display_issue_summary(start_issue, end_issue)
-if selected_issue_subset:
-    st.caption(f"当前精确统计期号：{', '.join(selected_issue_subset)}")
-
-st.subheader("命中详情下钻")
-selected_user = st.selectbox(
-    "选择需要下钻的专家",
-    options=frame["user_id"].astype(str).tolist(),
-)
-selected_issue = st.selectbox(
-    "选择期号",
-    options=["最新"] + available_issues,
-    index=0,
-)
-issue_filter = None if selected_issue == "最新" else selected_issue
-
-sql_detail = """
-    SELECT
-        p.issue_name,
-        p.numbers,
-        r.open_code,
-        r.open_time
-    FROM expert_predictions p
-    JOIN lottery_results r ON r.issue_name = p.issue_name
-    WHERE p.user_id = :user_id
-      AND p.playtype_id = (
-          SELECT playtype_id FROM playtype_dict WHERE playtype_name = :playtype_name LIMIT 1
-      )
-      AND (:start_issue IS NULL OR p.issue_name >= :start_issue)
-      AND (:end_issue IS NULL OR p.issue_name <= :end_issue)
-      AND (:issue_filter IS NULL OR p.issue_name = :issue_filter)
-    ORDER BY p.issue_name DESC
-    LIMIT 300
-"""
-detail_params = {
-    "user_id": selected_user,
-    "playtype_name": selected_playtype_name,
-    "start_issue": start_issue,
-    "end_issue": end_issue,
-    "issue_filter": issue_filter,
-}
-
-try:
-    detail_rows = cached_query(query_db, sql_detail, params=detail_params, ttl=300)
-except Exception as exc:
-    st.warning(f"加载专家明细失败：{exc}")
-    detail_rows = []
-
-if detail_rows:
-    detail_df = pd.DataFrame(detail_rows)
-    detail_df["tokens"] = detail_df["numbers"].apply(parse_tokens)
-    detail_df["命中次数"] = detail_df.apply(
-        lambda row: count_hits(row["tokens"], row.get("open_code")), axis=1
-    )
-    detail_df["是否命中"] = detail_df["命中次数"] > 0
-    st.dataframe(detail_df.drop(columns=["tokens"]), use_container_width=True)
-    download_csv_button(
-        detail_df.drop(columns=["tokens"]),
-        label="下载专家明细",
-        key="user_expert_hit_stat_detail",
-    )
-else:
-    st.info("当前条件未查询到明细数据。")
+    st.altair_chart(chart, use_container_width=True)

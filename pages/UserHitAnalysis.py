@@ -3,247 +3,314 @@ from __future__ import annotations
 import altair as alt
 import pandas as pd
 import streamlit as st
+from typing import Dict, List, Sequence
 
 from db.connection import query_db
 from utils.cache import cached_query
-from utils.data_access import fetch_experts, fetch_playtypes
-from utils.numbers import count_digit_hits, count_hits, parse_tokens
-from utils.ui import (
-    dataframe_with_pagination,
-    display_issue_summary,
-    download_csv_button,
-    issue_multiselect,
-    issue_range_selector,
+from utils.data_access import (
+    fetch_lottery_infos,
+    fetch_playtypes,
+    fetch_playtypes_for_issue,
+    fetch_predictions,
+    fetch_recent_issues,
 )
+from utils.numbers import match_prediction_hit, normalize_code, parse_tokens
 
 
-def _average_gap(issue_list: list[str]) -> str:
-    numeric = []
-    for issue in issue_list:
-        try:
-            numeric.append(int(issue))
-        except (TypeError, ValueError):
-            continue
-    if len(numeric) <= 1:
-        return "∞"
-    numeric.sort()
-    diffs = [b - a for a, b in zip(numeric, numeric[1:]) if b >= a]
-    if not diffs:
-        return "∞"
-    avg = sum(diffs) / len(diffs)
-    return f"{avg:.2f}"
-
-
+st.set_page_config(page_title="专家多期命中分析", layout="wide")
 st.header("UserHitAnalysis - 专家多期命中分析")
 
-start_issue, end_issue, issues = issue_range_selector(
-    "user_hit_analysis", default_window=30
-)
-manual_issues = issue_multiselect(
-    "user_hit_analysis_manual",
-    label="精准选择期号（可多选）",
-    max_default=10,
-    source="predictions",
+# 预加载玩法字典供跨期画像展示使用
+_all_playtypes_df = fetch_playtypes()
+PLAYTYPE_NAME_MAP: Dict[int, str] = (
+    {int(row.playtype_id): row.playtype_name for row in _all_playtypes_df.itertuples()}
+    if not _all_playtypes_df.empty
+    else {}
 )
 
-display_issue_summary(start_issue, end_issue)
-if manual_issues:
-    st.caption(f"已选择自定义期号：{', '.join(manual_issues)}")
-
-experts = fetch_experts(limit=500)
-if experts.empty:
-    st.warning("未能获取专家列表。")
+issues = fetch_recent_issues(limit=200)
+if not issues:
+    st.warning("无法获取期号列表。")
     st.stop()
 
-expert_options = experts["user_id"].astype(str).tolist()
-labels = {str(row.user_id): row.nick_name for row in experts.itertuples()}
-
-selected_user = st.selectbox(
-    "选择专家",
-    options=expert_options,
-    format_func=lambda value: labels.get(value, value),
-)
-
-playtypes = fetch_playtypes()
-if playtypes.empty:
-    st.warning("玩法字典为空，无法继续分析。")
+selected_issues = st.multiselect("期号", options=issues, default=issues)
+if not selected_issues:
+    st.warning("请至少选择一个期号。")
     st.stop()
 
-playtype_map = {
-    str(row.playtype_id): row.playtype_name for row in playtypes.itertuples()
+# 以列表首项加载可用玩法，与旧版保持一致
+selected_issue = selected_issues[0]
+playtypes_df = fetch_playtypes_for_issue(selected_issue)
+if playtypes_df.empty:
+    st.info("当前期号下无推荐数据。")
+    st.stop()
+
+issue_playtype_map = {
+    int(row.playtype_id): row.playtype_name for row in playtypes_df.itertuples()
 }
-selected_playtype = st.selectbox(
-    "选择玩法",
-    options=list(playtype_map.keys()),
-    format_func=lambda value: playtype_map.get(value, value),
+playtype_options = list(issue_playtype_map.keys())
+
+selected_playtype_id = st.selectbox(
+    "🎮 选择玩法",
+    options=playtype_options,
+    format_func=lambda pid: issue_playtype_map.get(pid, str(pid)),
+)
+selected_playtype_name = issue_playtype_map.get(
+    int(selected_playtype_id), str(selected_playtype_id)
 )
 
-params = {"user_id": selected_user, "playtype_id": int(selected_playtype)}
-filters = ["ep.user_id = :user_id", "ep.playtype_id = :playtype_id"]
+user_input = st.text_input("👤 输入专家 user_id")
 
-if manual_issues:
-    issue_placeholders = ", ".join(
-        [":issue_" + str(idx) for idx in range(len(manual_issues))]
+
+def _fetch_predictions(
+    issue_list: Sequence[str], playtype_ids: Sequence[int] | None = None
+) -> pd.DataFrame:
+    issue_tuple = tuple(issue_list)
+    return fetch_predictions(issue_tuple, playtype_ids=playtype_ids)
+
+
+def _fetch_open_infos(issue_list: Sequence[str]) -> Dict[str, Dict[str, object]]:
+    return fetch_lottery_infos(tuple(issue_list))
+
+
+def _fetch_expert_name(user_id: int) -> str:
+    rows = cached_query(
+        query_db,
+        "SELECT nick_name FROM expert_info WHERE user_id = :uid LIMIT 1",
+        params={"uid": user_id},
+        ttl=300,
     )
-    filters.append(f"ep.issue_name IN ({issue_placeholders})")
-    params.update({f"issue_{idx}": issue for idx, issue in enumerate(manual_issues)})
-else:
-    filters.append("(:start_issue IS NULL OR ep.issue_name >= :start_issue)")
-    filters.append("(:end_issue IS NULL OR ep.issue_name <= :end_issue)")
-    params.update({"start_issue": start_issue, "end_issue": end_issue})
+    if rows and rows[0].get("nick_name"):
+        return rows[0]["nick_name"]
+    return "未知"
 
-where_clause = " AND ".join(filters)
 
-sql = f"""
-    SELECT
-        ep.issue_name,
-        ep.numbers,
-        lr.open_code,
-        lr.open_time
-    FROM expert_predictions ep
-    LEFT JOIN lottery_results lr ON lr.issue_name = ep.issue_name
-    WHERE {where_clause}
-    ORDER BY ep.issue_name DESC
-    LIMIT 500
-"""
+if st.button("🔍 批量查询专家多期命中"):
+    raw_user = user_input.strip()
+    if not raw_user:
+        st.warning("请先输入专家 user_id。")
+        st.stop()
+    try:
+        user_id = int(raw_user)
+    except ValueError:
+        st.error("user_id 必须是数字。")
+        st.stop()
 
-try:
-    rows = cached_query(query_db, sql, params=params, ttl=300)
-except Exception as exc:
-    st.warning(f"查询命中详情失败：{exc}")
-    st.stop()
+    history_issues: List[str] = list(dict.fromkeys(selected_issues))
+    if not history_issues:
+        st.warning("缺少历史期号用于分析。")
+        st.stop()
 
-if not rows:
-    st.info("当前条件未获取到推荐记录。")
-else:
-    detail_df = pd.DataFrame(rows)
-    detail_df["tokens"] = detail_df["numbers"].apply(parse_tokens)
-    detail_df["token_count"] = detail_df["tokens"].apply(len)
-    detail_df["hit_count"] = detail_df.apply(
-        lambda row: count_hits(row["tokens"], row.get("open_code")), axis=1
+    predictions_df = _fetch_predictions(
+        history_issues, playtype_ids=[int(selected_playtype_id)]
     )
-    detail_df["hit_digits"] = detail_df.apply(
-        lambda row: count_digit_hits(row["tokens"], row.get("open_code")), axis=1
-    )
-    detail_df.sort_values(by="issue_name", ascending=False, inplace=True)
-    detail_df["是否命中"] = detail_df["hit_count"] > 0
-    metrics_cols = st.columns(3)
-    metrics_cols[0].metric("命中期数", int((detail_df["hit_count"] > 0).sum()))
-    metrics_cols[1].metric("命中组合数", int(detail_df["hit_count"].sum()))
-    metrics_cols[2].metric("命中数字数量", int(detail_df["hit_digits"].sum()))
+    if predictions_df.empty:
+        st.info("所选范围内无预测记录。")
+        st.stop()
 
-    subset, _, _ = dataframe_with_pagination(
-        detail_df, page_size=30, key_prefix="user_hit_analysis"
-    )
-    st.dataframe(subset.drop(columns=["tokens"]), use_container_width=True)
-    download_csv_button(
-        detail_df.drop(columns=["tokens"]), "下载推荐明细", "user_hit_analysis_detail"
-    )
+    predictions_df["issue_name"] = predictions_df["issue_name"].astype(str)
+    user_records = predictions_df[predictions_df["user_id"] == user_id]
+    if user_records.empty:
+        st.info("该专家在所选期号内未给出推荐。")
+        st.stop()
 
-    chart_data = detail_df[["issue_name", "hit_count", "hit_digits"]].copy()
-    chart_data = chart_data.sort_values("issue_name")
-    chart = (
-        alt.Chart(chart_data)
-        .transform_fold(["命中组合数", "命中数字数"], value="数值", key="指标")
-        .mark_line(point=True)
-        .encode(
-            x=alt.X("issue_name:N", title="期号", sort=None),
-            y=alt.Y("数值:Q"),
-            color="指标:N",
-        )
-        .properties(width="container", height=400)
-    )
-    st.altair_chart(chart, use_container_width=True)
-
-# 画像统计
-profile_params = {"user_id": selected_user}
-profile_filters = ["ep.user_id = :user_id"]
-if manual_issues:
-    issue_placeholders = ", ".join(
-        [":p_issue_" + str(idx) for idx in range(len(manual_issues))]
-    )
-    profile_filters.append(f"ep.issue_name IN ({issue_placeholders})")
-    profile_params.update(
-        {f"p_issue_{idx}": issue for idx, issue in enumerate(manual_issues)}
-    )
-else:
-    profile_filters.append("(:start_issue IS NULL OR ep.issue_name >= :start_issue)")
-    profile_filters.append("(:end_issue IS NULL OR ep.issue_name <= :end_issue)")
-    profile_params.update({"start_issue": start_issue, "end_issue": end_issue})
-
-profile_where = " AND ".join(profile_filters)
-
-sql_profile = f"""
-    SELECT
-        ep.issue_name,
-        ep.playtype_id,
-        pd.playtype_name,
-        ep.numbers,
-        lr.open_code
-    FROM expert_predictions ep
-    JOIN playtype_dict pd ON pd.playtype_id = ep.playtype_id
-    LEFT JOIN lottery_results lr ON lr.issue_name = ep.issue_name
-    WHERE {profile_where}
-    ORDER BY ep.issue_name DESC
-    LIMIT 1000
-"""
-
-try:
-    profile_rows = cached_query(query_db, sql_profile, params=profile_params, ttl=300)
-except Exception as exc:
-    st.warning(f"加载专家画像失败：{exc}")
-    profile_rows = []
-
-if profile_rows:
-    profile_df = pd.DataFrame(profile_rows)
-    profile_df["tokens"] = profile_df["numbers"].apply(parse_tokens)
-    profile_df["hit_count"] = profile_df.apply(
-        lambda row: count_hits(row["tokens"], row.get("open_code")), axis=1
-    )
-    profile_df["hit_digits"] = profile_df.apply(
-        lambda row: count_digit_hits(row["tokens"], row.get("open_code")), axis=1
+    nick_name = _fetch_expert_name(user_id)
+    st.markdown(
+        f"### 👤 当前专家：<code>{user_id}</code>（昵称：<code>{nick_name}</code>）",
+        unsafe_allow_html=True,
     )
 
-    summary_records = []
-    for (playtype_id, playtype_name), group in profile_df.groupby(
-        ["playtype_id", "playtype_name"]
-    ):
-        issues_hit = group.loc[group["hit_count"] > 0, "issue_name"].tolist()
-        summary_records.append(
+    info_map = _fetch_open_infos(history_issues)
+    grouped = {
+        issue: frame
+        for issue, frame in user_records.groupby("issue_name", sort=False)
+    }
+
+    result_rows = []
+    for issue in history_issues:
+        sub_df = grouped.get(issue)
+        open_info = info_map.get(issue, {})
+        open_code = open_info.get("open_code") if open_info else None
+        open_digits = set(normalize_code(open_code)) if open_code else set()
+
+        if sub_df is None or sub_df.empty:
+            result_rows.append(
+                {
+                    "期号": issue,
+                    "推荐组合": "-",
+                    "推荐组合数": 0,
+                    "命中数": 0,
+                    "命中数字数量": 0,
+                    "开奖号码": open_code or "-",
+                }
+            )
+            continue
+
+        numbers_list = sub_df["numbers"].tolist()
+        hit_count = 0
+        hit_digits_total = 0
+        for numbers in numbers_list:
+            digits = set("".join(parse_tokens(numbers)))
+            if open_code:
+                if match_prediction_hit(selected_playtype_name, numbers, open_code):
+                    hit_count += 1
+                hit_digits_total += len(open_digits & digits)
+
+        result_rows.append(
             {
-                "playtype_id": playtype_id,
-                "playtype_name": playtype_name,
-                "recommend_count": len(group),
-                "hit_issue_count": int((group["hit_count"] > 0).sum()),
-                "hit_combination_count": int(group["hit_count"].sum()),
-                "hit_digit_count": int(group["hit_digits"].sum()),
-                "avg_hit_gap": _average_gap(issues_hit),
+                "期号": issue,
+                "推荐组合": "、".join(numbers_list),
+                "推荐组合数": len(numbers_list),
+                "命中数": hit_count,
+                "命中数字数量": hit_digits_total,
+                "开奖号码": open_code or "-",
             }
         )
-    if not summary_records:
-        st.info("未能根据当前条件生成玩法画像统计。")
-    else:
-        summary_df = pd.DataFrame(summary_records)
-        st.subheader("玩法画像概览")
-        st.dataframe(summary_df, use_container_width=True)
-        download_csv_button(summary_df, "下载玩法画像", "user_hit_analysis_profile")
 
-        bar_chart = (
-            alt.Chart(summary_df)
+    result_df = pd.DataFrame(result_rows)
+    if result_df.empty:
+        st.info("无统计数据。")
+    else:
+        hit_issues = int((result_df["命中数"] > 0).sum())
+        total_issues = len(result_df)
+        hit_digits_sum = int(result_df["命中数字数量"].sum())
+        miss_issues = total_issues - hit_issues
+
+        result_df = result_df.sort_values("期号", ascending=False)
+        st.markdown(
+            f"### 📊 命中统计表（共 {total_issues} 期）命中：{hit_issues} 期，未命中：{miss_issues} 期，命中数字合计：{hit_digits_sum} 个"
+        )
+        st.dataframe(result_df, hide_index=True, use_container_width=True)
+
+        chart_data = result_df[["期号", "命中数", "命中数字数量"]].copy()
+        chart_data["期号"] = chart_data["期号"].astype(str)
+        chart_long = chart_data.melt(
+            id_vars="期号",
+            value_vars=["命中数", "命中数字数量"],
+            var_name="指标",
+            value_name="数值",
+        )
+        chart = (
+            alt.Chart(chart_long)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("期号:N", sort=None),
+                y=alt.Y("数值:Q"),
+                color=alt.Color("指标:N", title="指标"),
+                tooltip=["期号", "指标", "数值"],
+            )
+            .properties(width="container", height=360)
+        )
+        st.altair_chart(chart, use_container_width=True)
+
+    st.session_state["user_hit_analysis"] = {
+        "user_id": user_id,
+        "nick_name": nick_name,
+        "issues": history_issues,
+    }
+
+st.markdown("---")
+st.markdown("## 🧠 专家综合画像")
+if st.button("📌 查询专家综合画像"):
+    cached = st.session_state.get("user_hit_analysis")
+    if not cached:
+        st.warning("请先执行【批量查询专家多期命中】。")
+        st.stop()
+
+    user_id = cached["user_id"]
+    nick_name = cached.get("nick_name", "未知")
+    history_issues = cached["issues"]
+    if not history_issues:
+        st.warning("缺少可用于画像的期号。")
+        st.stop()
+
+    history_tuple = tuple(history_issues)
+    predictions_df = _fetch_predictions(history_tuple)
+    if predictions_df.empty:
+        st.info("无历史推荐数据用于画像分析。")
+        st.stop()
+
+    predictions_df["issue_name"] = predictions_df["issue_name"].astype(str)
+    user_df = predictions_df[predictions_df["user_id"] == user_id]
+    if user_df.empty:
+        st.info("该专家没有符合条件的历史推荐。")
+        st.stop()
+
+    info_map = _fetch_open_infos(history_tuple)
+
+    summary_records = []
+    for inner_playtype_id, sub_df in user_df.groupby("playtype_id"):
+        inner_playtype_id = int(inner_playtype_id)
+        inner_playtype_name = PLAYTYPE_NAME_MAP.get(
+            inner_playtype_id, str(inner_playtype_id)
+        )
+        total = len(sub_df)
+        hit_count = 0
+        hit_digits_sum = 0
+        hit_issue_indices: List[int] = []
+
+        for row in sub_df.itertuples():
+            issue_name = str(row.issue_name)
+            numbers = row.numbers
+            open_info = info_map.get(issue_name)
+            open_code = open_info.get("open_code") if open_info else None
+            open_digits = set(normalize_code(open_code)) if open_code else set()
+            digits = set("".join(parse_tokens(numbers)))
+
+            if open_code and match_prediction_hit(inner_playtype_name, numbers, open_code):
+                hit_count += 1
+                hit_issue_indices.append(int(issue_name))
+            hit_digits_sum += len(open_digits & digits)
+
+        if hit_count > 1 and hit_issue_indices:
+            hit_issue_indices.sort()
+            computed_gaps = [
+                j - i for i, j in zip(hit_issue_indices[:-1], hit_issue_indices[1:])
+            ]
+            if computed_gaps:
+                avg_gap = round(sum(computed_gaps) / len(computed_gaps), 1)
+            else:
+                avg_gap = "-"
+        elif hit_count == 1:
+            avg_gap = "1命中"
+        else:
+            avg_gap = "∞"
+
+        summary_records.append(
+            {
+                "玩法": inner_playtype_name,
+                "推荐期数": total,
+                "命中期数": hit_count,
+                "命中数字数量": hit_digits_sum,
+                "平均命中间隔": avg_gap,
+            }
+        )
+
+    if not summary_records:
+        st.info("未能生成专家画像。")
+    else:
+        stats_df = pd.DataFrame(summary_records).sort_values(
+            "命中期数", ascending=False
+        )
+        st.markdown(
+            f"### 🎯 专家综合画像（user_id: {user_id}，昵称：{nick_name}）"
+        )
+        st.dataframe(stats_df, hide_index=True, use_container_width=True)
+
+        chart = (
+            alt.Chart(stats_df)
             .mark_bar()
             .encode(
-                x=alt.X("playtype_name:N", title="玩法", sort="-y"),
-                y=alt.Y("hit_issue_count:Q", title="命中期数"),
+                x=alt.X("命中期数:Q", title="命中期数"),
+                y=alt.Y("玩法:N", sort="-x"),
                 tooltip=[
-                    "playtype_name",
-                    "recommend_count",
-                    "hit_issue_count",
-                    "avg_hit_gap",
+                    "玩法",
+                    "推荐期数",
+                    "命中期数",
+                    "命中数字数量",
+                    "平均命中间隔",
                 ],
-                color="playtype_name:N",
             )
-            .properties(width="container", height=400)
+            .properties(width="container", height=360)
         )
-        st.altair_chart(bar_chart, use_container_width=True)
-else:
-    st.info("未获取到该专家的玩法画像数据。")
+        st.altair_chart(chart, use_container_width=True)

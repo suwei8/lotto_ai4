@@ -1,0 +1,28 @@
+{
+  "name": "lotto_ai4",
+  "version": "1.0.0",
+  "description": "Lotto AI 4 是一个基于 Streamlit 的福彩 3D 数据分析平台，聚焦专家推荐表现、开奖冷热走势、号码分布及高级选号辅助。应用通过 SQLAlchemy + PyMySQL 访问 Docker 中的只读 MySQL 8.0 数据库，并在页面层实现缓存、分页、图表和导出等常用数据应用能力。",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/suwei8/lotto_ai4.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/suwei8/lotto_ai4/issues"
+  },
+  "homepage": "https://github.com/suwei8/lotto_ai4#readme",
+  "dependencies": {
+    "@playwright/test": "^1.55.0"
+  }
+}
