@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import QueuePool
 
-DB_URL = "mysql+pymysql://root:sw63828@mysql:3306/lotto_3d?charset=utf8mb4"
+DB_URL = "mysql+pymysql://root:sw63828@127.0.0.1:3306/lotto_3d?charset=utf8mb4"
 
 _engine = create_engine(
     DB_URL,

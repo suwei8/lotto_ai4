@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-import itertools
-from typing import List, Set
+from typing import List
 
-import altair as alt
 import pandas as pd
 import streamlit as st
+st.set_page_config(page_title="Lotto AI", layout="wide")
+from itertools import permutations
 
 from db.connection import query_db
 from utils.cache import cached_query
-from utils.data_access import fetch_lottery_info, fetch_playtypes, fetch_recent_issues
+from utils.data_access import fetch_playtypes
+from utils.ui import issue_picker, playtype_picker, render_open_info
 from utils.numbers import parse_tokens
-from utils.ui import download_csv_button
 
 
 def _normalize_combo(tokens: List[str]) -> str:
-    return "-".join(sorted(tokens))
+    return "".join(sorted(tokens))
 
 
 def _digits_from_tokens(tokens: List[str]) -> List[int]:
@@ -27,55 +27,38 @@ def _digits_from_tokens(tokens: List[str]) -> List[int]:
     return digits
 
 
-def _has_consecutive(digits: List[int]) -> bool:
-    if not digits:
-        return False
-    sorted_digits = sorted(set(digits))
-    return any(b - a == 1 for a, b in zip(sorted_digits, sorted_digits[1:]))
-
-
-def _range_slider(label: str, series: pd.Series) -> tuple[int, int]:
-    min_val = int(series.min())
-    max_val = int(series.max())
-    if min_val == max_val:
-        st.info(f"{label} 固定为 {min_val}")
-        return min_val, max_val
-    return st.slider(
-        label,
-        min_value=min_val,
-        max_value=max_val,
-        value=(min_val, max_val),
-    )
-
-
 st.header("NumberAnalysis - 号码组合分析")
 
-issues = fetch_recent_issues(limit=120)
-if not issues:
-    st.warning("无法获取期号列表。")
+selected_issue = issue_picker(
+    "number_analysis_issue",
+    mode="single",
+    label="选择期号",
+)
+if not selected_issue:
     st.stop()
 
-selected_issue = st.selectbox("选择期号", options=issues)
-
-lottery = fetch_lottery_info(selected_issue)
-if lottery:
-    st.caption(
-        f"开奖号码：{lottery.get('open_code') or '未开奖'}丨和值：{lottery.get('sum')}丨跨度：{lottery.get('span')}"
-    )
+render_open_info(selected_issue, key="number_analysis_open", show_metrics=False)
 
 playtypes = fetch_playtypes()
 if playtypes.empty:
     st.warning("玩法字典为空。")
     st.stop()
 
-playtype_map = {
-    str(row.playtype_id): row.playtype_name for row in playtypes.itertuples()
-}
-selected_playtype = st.selectbox(
-    "选择玩法",
-    options=list(playtype_map.keys()),
-    format_func=lambda value: playtype_map.get(value, value),
+playtypes["id"] = playtypes["playtype_id"].astype(str)
+playtype_map = dict(zip(playtypes["id"], playtypes["playtype_name"].astype(str)))
+default_playtype = next(
+    (pid for pid, name in playtype_map.items() if name == "三胆"),
+    playtypes["id"].iloc[0],
 )
+selected_playtype = playtype_picker(
+    "number_analysis_playtype",
+    mode="single",
+    label="选择玩法",
+    include=playtypes["id"].tolist(),
+    default=default_playtype,
+)
+if not selected_playtype:
+    st.stop()
 
 sql = """
     SELECT user_id, numbers
@@ -131,30 +114,64 @@ combo_df["small_count"] = combo_df["digits"].apply(
 combo_df["big_small_ratio"] = combo_df.apply(
     lambda row: f"{row['big_count']}:{row['small_count']}", axis=1
 )
-combo_df["has_consecutive"] = combo_df["digits"].apply(_has_consecutive)
 combo_df.sort_values(by="count", ascending=False, inplace=True)
+combo_df.reset_index(drop=True, inplace=True)
 
-count_min, count_max = _range_slider("出现次数范围", combo_df["count"])
+count_min = int(combo_df["count"].min())
+count_max = int(combo_df["count"].max())
+selected_count = st.slider(
+    "出现次数范围",
+    min_value=count_min,
+    max_value=count_max,
+    value=(count_min, count_max),
+)
 
-include_digits = st.multiselect("必须包含数字", options=[str(i) for i in range(10)])
-exclude_digits = st.multiselect("排除包含数字", options=[str(i) for i in range(10)])
+digits_options = [str(i) for i in range(10)]
+sum_options = sorted(combo_df["sum_digits"].unique().tolist())
+span_options = sorted(combo_df["span"].unique().tolist())
+odd_even_options = sorted(combo_df["odd_even_ratio"].unique().tolist())
+big_small_options = sorted(combo_df["big_small_ratio"].unique().tolist())
 
-sum_min, sum_max = _range_slider("和值范围", combo_df["sum_digits"])
-span_min, span_max = _range_slider("跨度范围", combo_df["span"])
+with st.expander("过滤器", expanded=False):
+    row1 = st.columns(3)
+    with row1[0]:
+        excluded_digits = st.multiselect(
+            "排除包含以下数字", options=digits_options, key="filter_excluded_digits"
+        )
+    with row1[1]:
+        excluded_sums = st.multiselect(
+            "排除包含以下和值", options=sum_options, key="filter_excluded_sums"
+        )
+    with row1[2]:
+        excluded_spans = st.multiselect(
+            "排除包含以下跨度", options=span_options, key="filter_excluded_spans"
+        )
 
-odd_even_options = sorted(combo_df["odd_even_ratio"].unique())
-selected_odd_even = st.multiselect("保留奇偶比", options=odd_even_options)
-
-big_small_options = sorted(combo_df["big_small_ratio"].unique())
-selected_big_small = st.multiselect("保留大小比", options=big_small_options)
-
-exclude_consecutive = st.checkbox("排除连续数字", value=False)
+    row2 = st.columns(3)
+    with row2[0]:
+        excluded_odd_even = st.multiselect(
+            "排除包含以下奇偶比", options=odd_even_options, key="filter_excluded_odd_even"
+        )
+    with row2[1]:
+        excluded_big_small = st.multiselect(
+            "排除含以下大小比", options=big_small_options, key="filter_excluded_big_small"
+        )
+    with row2[2]:
+        include_digits = st.multiselect(
+            "筛选包含以下数字", options=digits_options, key="filter_include_digits"
+        )
 
 filtered_df = combo_df[
-    (combo_df["count"].between(count_min, count_max))
-    & (combo_df["sum_digits"].between(sum_min, sum_max))
-    & (combo_df["span"].between(span_min, span_max))
-]
+    combo_df["count"].between(selected_count[0], selected_count[1])
+].copy()
+
+if excluded_digits:
+    excluded_set = set(excluded_digits)
+    filtered_df = filtered_df[
+        ~filtered_df["digits"].apply(
+            lambda digits: bool(excluded_set.intersection({str(d) for d in digits}))
+        )
+    ]
 
 if include_digits:
     include_set = set(include_digits)
@@ -164,149 +181,142 @@ if include_digits:
         )
     ]
 
-if exclude_digits:
-    exclude_set = set(exclude_digits)
+if excluded_sums:
+    filtered_df = filtered_df[~filtered_df["sum_digits"].isin(excluded_sums)]
+
+if excluded_spans:
+    filtered_df = filtered_df[~filtered_df["span"].isin(excluded_spans)]
+
+if excluded_odd_even:
     filtered_df = filtered_df[
-        ~filtered_df["digits"].apply(
-            lambda digits: bool(exclude_set.intersection({str(d) for d in digits}))
-        )
+        ~filtered_df["odd_even_ratio"].isin(excluded_odd_even)
     ]
 
-if selected_odd_even:
-    filtered_df = filtered_df[filtered_df["odd_even_ratio"].isin(selected_odd_even)]
+if excluded_big_small:
+    filtered_df = filtered_df[
+        ~filtered_df["big_small_ratio"].isin(excluded_big_small)
+    ]
 
-if selected_big_small:
-    filtered_df = filtered_df[filtered_df["big_small_ratio"].isin(selected_big_small)]
+summary_table = filtered_df[["combo_key", "count"]].copy()
+summary_table.rename(columns={"combo_key": "号码组合", "count": "出现次数"}, inplace=True)
 
-if exclude_consecutive:
-    filtered_df = filtered_df[~filtered_df["has_consecutive"]]
-
-filtered_df = filtered_df.copy()
-filtered_df["numbers"] = filtered_df["sample_numbers"]
-
-st.subheader("组合统计")
-st.dataframe(
-    filtered_df[
-        [
-            "combo_key",
-            "numbers",
-            "count",
-            "sum_digits",
-            "span",
-            "odd_even_ratio",
-            "big_small_ratio",
-            "has_consecutive",
-        ]
-    ],
-    use_container_width=True,
-)
-st.caption(
-    f"筛选后组合数：{len(filtered_df)}丨平均出现次数：{filtered_df['count'].mean() if not filtered_df.empty else 0:.2f}"
-)
-
-download_csv_button(
-    filtered_df[
-        [
-            "combo_key",
-            "numbers",
-            "count",
-            "sum_digits",
-            "span",
-            "odd_even_ratio",
-            "big_small_ratio",
-            "has_consecutive",
-        ]
-    ],
-    "下载组合统计",
-    "number_analysis_combinations",
-)
-
-st.subheader("组合出现次数分布")
-
-chart = (
-    alt.Chart(filtered_df)
-    .mark_bar()
-    .encode(
-        x=alt.X("combo_key:N", sort="-y", title="组合"),
-        y=alt.Y("count:Q", title="出现次数"),
-        tooltip=["combo_key", "count", "sum_digits", "span"],
-    )
-    .properties(width="container", height=400)
-)
-st.altair_chart(chart, use_container_width=True)
-
-st.subheader("号码配对器")
-sort_mode = st.radio(
-    "排序方式", options=("出现次数高到低", "出现次数低到高"), horizontal=True
-)
-max_digits = st.slider("最大覆盖数字数", min_value=3, max_value=10, value=9)
-
-pair_df = filtered_df.sort_values(by="count", ascending=(sort_mode != "出现次数高到低"))
-selected_pairs = []
-used_digits: Set[int] = set()
-
-for _, row in pair_df.iterrows():
-    digits = set(row["digits"])
-    combined = used_digits.union(digits)
-    if len(combined) <= max_digits:
-        selected_pairs.append(row)
-        used_digits = combined
-
-if selected_pairs:
-    pair_table = pd.DataFrame(selected_pairs)
-    st.write(
-        "已选择组合数：",
-        len(pair_table),
-        "丨覆盖数字：",
-        "".join(str(d) for d in sorted(used_digits)),
-    )
-    st.dataframe(
-        pair_table[["combo_key", "numbers", "count"]], use_container_width=True
-    )
+st.subheader(f"组合统计（共 {len(summary_table)} 个）")
+if summary_table.empty:
+    st.info("当前过滤条件下无组合可展示。")
 else:
-    st.info("未能根据配对规则选择组合。")
+    st.dataframe(summary_table, width="stretch")
 
-st.subheader("全排列转换（组选）")
-permutation_enabled = st.checkbox("启用全排列转换", value=False)
-max_permutations = 5000
-permutation_results: list[str] = []
+if not summary_table.empty:
+    search_term = st.text_input("🔍 查找特定号码组合")
+    if search_term:
+        query = search_term.strip()
+        if query:
+            matches = summary_table[
+                summary_table["号码组合"].str.contains(query, regex=False)
+            ]
+            if matches.empty:
+                st.info("未找到匹配的组合。")
+            else:
+                st.dataframe(matches, width="stretch")
 
-if permutation_enabled:
-    for tokens in filtered_df["tokens"]:
-        digits = [d for token in tokens for d in token]
-        if len(digits) > 6:  # 避免组合过大
-            continue
-        perms = {"".join(p) for p in itertools.permutations(digits)}
-        permutation_results.extend(sorted(perms))
-        if len(permutation_results) >= max_permutations:
-            break
-    permutation_results = permutation_results[:max_permutations]
-    if permutation_results:
-        st.write(
-            f"展示前 {len(permutation_results)} 项全排列结果（上限 {max_permutations}）。"
+    bet_code_text = ",".join(summary_table["号码组合"].tolist())
+    bet_count = len(summary_table)
+
+    st.markdown("### ✏️ 投注号码（可复制）")
+    col_group, col_direct = st.columns(2)
+    with col_group:
+        group_multiplier = st.number_input(
+            "组选倍数",
+            min_value=0,
+            value=1,
+            step=1,
+            key="number_analysis_group_multiplier",
         )
-        st.text(", ".join(permutation_results))
-    else:
-        st.info("未生成任何全排列结果（可能组合位数过大）。")
+    with col_direct:
+        direct_multiplier = st.number_input(
+            "直选倍数",
+            min_value=0,
+            value=1,
+            step=1,
+            key="number_analysis_direct_multiplier",
+        )
 
-st.subheader("投注估算")
-col_group, col_direct = st.columns(2)
-with col_group:
-    group_multiplier = st.number_input("组选倍数", min_value=0, value=1, step=1)
-with col_direct:
-    direct_multiplier = st.number_input("直选倍数", min_value=0, value=0, step=1)
+    group_count = bet_count * group_multiplier
+    direct_count = bet_count * direct_multiplier
+    total_count = group_count + direct_count
+    cost = total_count * 2
+    bonus = group_multiplier * 280 + direct_multiplier * 1700
+    profit = bonus - cost
 
-combo_count = len(filtered_df)
-permutation_count = len(permutation_results) if permutation_enabled else combo_count
+    st.text_area(
+        "投注内容",
+        f"{bet_code_text} 共{bet_count}注，组选{group_multiplier}倍，直选{direct_multiplier}倍 {cost}元",
+        height=80,
+    )
+    st.markdown(
+        f"**投注注数：{total_count} 注（组选 {group_count} 注 + 直选 {direct_count} 注）**"
+    )
+    st.markdown(f"**投注成本：{cost} 元**")
+    st.markdown(
+        f"**奖金合计：{bonus} 元（假设组选与直选各命中1注）**"
+    )
+    st.markdown(
+        f"**纯收益：{'盈利' if profit >= 0 else '亏损'} {abs(profit)} 元**"
+    )
 
-direct_payout = 970  # 直选参考奖金
-combo_payout = 320  # 组选参考奖金
+    with st.expander("🎯 号码组合全排列转换（适用于组选）", expanded=False):
+        enable_permutation = st.checkbox(
+            "启用全排列（如123 → 123,132,213,231,312,321）",
+            value=True,
+            key="number_analysis_enable_permutation",
+        )
+        if enable_permutation:
+            permuted_numbers = set()
+            for code in summary_table["号码组合"].tolist():
+                for perm in permutations(code):
+                    permuted_numbers.add("".join(perm))
 
-estimated_cost = (
-    combo_count * group_multiplier * 2 + combo_count * direct_multiplier * 2
-)
-estimated_reward = combo_payout * group_multiplier + direct_payout * direct_multiplier
+            permuted_numbers = sorted(permuted_numbers)
+            perm_count = len(permuted_numbers)
+            perm_text = ",".join(permuted_numbers)
 
-st.write(
-    f"组合数：{combo_count}丨排列数：{permutation_count}丨预计投入：¥{estimated_cost:.2f}丨预估奖金：¥{estimated_reward:.2f}"
-)
+            col_perm_group, col_perm_direct = st.columns(2)
+            with col_perm_group:
+                perm_group_multiplier = st.number_input(
+                    "组选倍数（排列模块）",
+                    min_value=0,
+                    value=1,
+                    step=1,
+                    key="number_analysis_perm_group_multiplier",
+                )
+            with col_perm_direct:
+                perm_direct_multiplier = st.number_input(
+                    "直选倍数（排列模块）",
+                    min_value=0,
+                    value=1,
+                    step=1,
+                    key="number_analysis_perm_direct_multiplier",
+                )
+
+            perm_group_count = perm_count * perm_group_multiplier
+            perm_direct_count = perm_count * perm_direct_multiplier
+            perm_total_count = perm_group_count + perm_direct_count
+            perm_cost = perm_total_count * 2
+            perm_bonus = perm_group_multiplier * 280 + perm_direct_multiplier * 1700
+            perm_profit = perm_bonus - perm_cost
+
+            st.text_area(
+                "排列后的投注号码",
+                f"{perm_text} 共{perm_count}注，组选{perm_group_multiplier}倍，直选{perm_direct_multiplier}倍 {perm_cost}元",
+                height=100,
+            )
+            st.markdown(
+                f"**投注注数：{perm_total_count} 注（组选 {perm_group_count} 注 + 直选 {perm_direct_count} 注）**"
+            )
+            st.markdown(f"**投注成本：{perm_cost} 元**")
+            st.markdown(
+                f"**奖金合计：{perm_bonus} 元（假设组选与直选各命中1注）**"
+            )
+            st.markdown(
+                f"**纯收益：{'盈利' if perm_profit >= 0 else '亏损'} {abs(perm_profit)} 元**"
+            )

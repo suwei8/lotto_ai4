@@ -12,8 +12,8 @@ from utils.data_access import (
     fetch_playtypes,
     fetch_playtypes_for_issue,
     fetch_predictions,
-    fetch_recent_issues,
 )
+from utils.ui import issue_picker, playtype_picker, render_open_info
 from utils.numbers import match_prediction_hit, normalize_code, parse_tokens
 
 
@@ -28,18 +28,18 @@ PLAYTYPE_NAME_MAP: Dict[int, str] = (
     else {}
 )
 
-issues = fetch_recent_issues(limit=200)
-if not issues:
-    st.warning("无法获取期号列表。")
-    st.stop()
-
-selected_issues = st.multiselect("期号", options=issues, default=issues)
+selected_issues = issue_picker(
+    "user_hit_analysis_issues",
+    mode="multi",
+    label="期号",
+)
 if not selected_issues:
     st.warning("请至少选择一个期号。")
     st.stop()
 
 # 以列表首项加载可用玩法，与旧版保持一致
 selected_issue = selected_issues[0]
+render_open_info(selected_issue, key="user_hit_analysis_open", show_metrics=False)
 playtypes_df = fetch_playtypes_for_issue(selected_issue)
 if playtypes_df.empty:
     st.info("当前期号下无推荐数据。")
@@ -50,11 +50,15 @@ issue_playtype_map = {
 }
 playtype_options = list(issue_playtype_map.keys())
 
-selected_playtype_id = st.selectbox(
-    "🎮 选择玩法",
-    options=playtype_options,
-    format_func=lambda pid: issue_playtype_map.get(pid, str(pid)),
+selected_playtype_id = playtype_picker(
+    "user_hit_analysis_playtype",
+    mode="single",
+    label="🎮 选择玩法",
+    include=[str(pid) for pid in playtype_options],
 )
+if not selected_playtype_id:
+    st.stop()
+selected_playtype_id = int(selected_playtype_id)
 selected_playtype_name = issue_playtype_map.get(
     int(selected_playtype_id), str(selected_playtype_id)
 )

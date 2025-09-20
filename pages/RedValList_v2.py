@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-import collections
-
-import altair as alt
 import pandas as pd
 import streamlit as st
+st.set_page_config(page_title="Lotto AI", layout="wide")
 
 from db.connection import query_db
 from utils.cache import cached_query
 from utils.data_access import fetch_lottery_info
+from utils.ui import issue_picker, playtype_picker, render_open_info, render_rank_position_calculator
 from utils.numbers import parse_tokens
 from utils.sql import make_in_clause
-from utils.ui import download_csv_button
 
 st.header("RedValList_v2 - 选号分布 (V2)")
 
@@ -33,13 +31,16 @@ if not issue_rows:
     st.stop()
 
 issues = [row["issue_name"] for row in issue_rows]
-selected_issue = st.selectbox("选择期号", options=issues)
+selected_issue = issue_picker(
+    "red_val_v2_issue",
+    mode="single",
+    options=issues,
+    label="选择期号",
+)
+if not selected_issue:
+    st.stop()
 
-lottery = fetch_lottery_info(selected_issue)
-if lottery:
-    st.caption(
-        f"开奖号码：{lottery.get('open_code') or '未开奖'}丨和值：{lottery.get('sum')}丨跨度：{lottery.get('span')}"
-    )
+render_open_info(selected_issue, key="red_val_v2_open", show_metrics=False)
 
 sql_playtypes = """
     SELECT DISTINCT v2.playtype_id, pd.playtype_name
@@ -59,12 +60,14 @@ playtype_df = pd.DataFrame(playtype_rows)
 playtype_map = {
     str(row.playtype_id): row.playtype_name for row in playtype_df.itertuples()
 }
-selected_playtypes = st.multiselect(
-    "选择玩法",
-    options=list(playtype_map.keys()),
+raw_playtypes = playtype_picker(
+    "red_val_v2_playtypes",
+    mode="multi",
+    label="选择玩法",
+    include=list(playtype_map.keys()),
     default=list(playtype_map.keys()),
-    format_func=lambda value: playtype_map.get(value, value),
 )
+selected_playtypes = [int(pid) for pid in raw_playtypes]
 
 if not selected_playtypes:
     st.warning("请选择至少一个玩法。")
@@ -122,36 +125,12 @@ display_columns = [
     "his_max_series_not_hit_count_map",
 ]
 detail_view = result_df[display_columns]
-st.dataframe(detail_view, use_container_width=True)
-download_csv_button(detail_view, "下载V2选号分布", "red_val_list_v2_detail")
+st.dataframe(detail_view, width="stretch")
 
-if lottery:
-    st.subheader("开奖信息")
-    st.json(lottery)
+rank_entries: list[tuple[str, list[str]]] = []
+for _, row in result_df.iterrows():
+    digits = [n.strip() for n in str(row["num"]).split(",") if n.strip()]
+    if digits:
+        rank_entries.append((row["playtype_name"], digits))
 
-st.subheader("排行榜位置数字统计器")
-digit_counter = collections.Counter()
-for num in result_df["num"]:
-    for token in parse_tokens(num):
-        digit_counter.update(token)
-
-if digit_counter:
-    stats_df = pd.DataFrame(
-        {"digit": list(digit_counter.keys()), "count": list(digit_counter.values())}
-    ).sort_values(by="count", ascending=False)
-    st.dataframe(stats_df, use_container_width=True)
-    download_csv_button(stats_df, "下载数字统计", "red_val_list_v2_digits")
-    digit_chart = (
-        alt.Chart(stats_df)
-        .mark_bar()
-        .encode(
-            x=alt.X("digit:N", title="数字"),
-            y=alt.Y("count:Q", title="出现次数"),
-            color=alt.value("#ff7f0e"),
-            tooltip=["digit", "count"],
-        )
-        .properties(width=600, height=320)
-    )
-    st.altair_chart(digit_chart, use_container_width=True)
-else:
-    st.info("无法解析号码集合为数字。")
+render_rank_position_calculator(rank_entries, key="red_val_v2_rank")

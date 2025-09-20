@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 from collections import Counter
@@ -17,6 +16,8 @@ from utils.data_access import (
 )
 from utils.numbers import match_prediction_hit, normalize_code, parse_tokens
 from utils.sql import make_in_clause
+from utils.ui import issue_picker, playtype_picker, render_open_info
+from utils.charts import render_digit_frequency_chart
 
 
 st.set_page_config(page_title="🎯 专家推荐筛选器 Pro", layout="wide")
@@ -46,33 +47,14 @@ def extract_digit_set(numbers: str) -> Set[str]:
     return set(digits)
 
 
-def render_horizontal_chart(freq_df: pd.DataFrame, open_digits: Sequence[str]) -> alt.Chart:
-    chart_df = freq_df.copy()
-    hit_set = set(open_digits or [])
-    chart_df["命中状态"] = chart_df["数字"].apply(
-        lambda digit: "命中" if digit in hit_set else "未命中"
+def render_horizontal_chart(freq_df: pd.DataFrame, open_digits: Sequence[str]):
+    return render_digit_frequency_chart(
+        freq_df,
+        digit_column="数字",
+        count_column="被推荐次数",
+        hit_digits=open_digits,
+        width=320,
     )
-    chart = (
-        alt.Chart(chart_df)
-        .mark_bar()
-        .encode(
-            y=alt.Y("数字:N", sort="-x", axis=alt.Axis(labelFontSize=13)),
-            x=alt.X("被推荐次数:Q", title="推荐次数"),
-            color=alt.Color(
-                "命中状态:N",
-                title="命中状态",
-                scale=alt.Scale(domain=["命中", "未命中"], range=["#1f77b4", "#d62728"]),
-            ),
-            tooltip=["数字", "被推荐次数", "命中状态"],
-        )
-        .properties(height=max(320, 28 * len(chart_df)), width=320)
-    )
-    text = (
-        alt.Chart(chart_df)
-        .mark_text(align="left", baseline="middle", dx=4, color="#333")
-        .encode(y=alt.Y("数字:N", sort="-x"), x=alt.X("被推荐次数:Q"), text="被推荐次数:Q")
-    )
-    return chart + text
 
 
 def users_matching_number_conditions(
@@ -237,13 +219,21 @@ if not issues:
     st.stop()
 
 st.markdown("## 📌 基础筛选条件")
-issue_name = st.selectbox(
-    "📅 选择期号",
+previous_issue = st.session_state.get("uefp_issue_last")
+issue_name = issue_picker(
+    "uefp_issue",
+    mode="single",
+    source="predictions",
     options=issues,
-    index=0,
-    key="uefp_issue",
-    on_change=clear_cached_result,
+    default=previous_issue or issues[0],
 )
+if not issue_name:
+    st.stop()
+if issue_name != previous_issue:
+    st.session_state["uefp_issue_last"] = issue_name
+    clear_cached_result()
+
+render_open_info(issue_name, key="uefp_open", show_metrics=False)
 
 playtypes_df = fetch_playtypes_for_issue(issue_name)
 if playtypes_df.empty:
@@ -256,13 +246,20 @@ playtype_map = {
 }
 playtype_ids = list(playtype_map.keys())
 
-target_playtype_id = st.selectbox(
-    "🎮 本期查询玩法（用于热力图与详情）",
-    options=playtype_ids,
-    format_func=lambda pid: playtype_map.get(pid, str(pid)),
-    key="uefp_target_playtype",
-    on_change=clear_cached_result,
+previous_playtype = st.session_state.get("uefp_playtype_last")
+target_playtype_id_str = playtype_picker(
+    "uefp_target_playtype",
+    mode="single",
+    label="🎮 本期查询玩法（用于热力图与详情）",
+    include=[str(pid) for pid in playtype_ids],
+    default=str(previous_playtype) if previous_playtype else str(playtype_ids[0]),
 )
+if not target_playtype_id_str:
+    st.stop()
+target_playtype_id = int(target_playtype_id_str)
+if target_playtype_id != previous_playtype:
+    st.session_state["uefp_playtype_last"] = target_playtype_id
+    clear_cached_result()
 target_playtype_name = playtype_map.get(int(target_playtype_id), str(target_playtype_id))
 
 st.markdown("## 🧠 推荐数字条件过滤器")
@@ -614,7 +611,10 @@ if "uefp_result" in st.session_state:
                 f"#### 🎯 推荐数字热力图（共 {len(freq_df)} 个数字，命中：{hit_digit_count} 个）"
             )
             chart = render_horizontal_chart(freq_df, open_digits if has_open_code else [])
-            st.altair_chart(chart, use_container_width=True)
+            if chart is not None:
+                st.altair_chart(chart, use_container_width=True)
+            else:
+                st.info("暂无可视化数据。")
         else:
             st.info("暂无推荐数字统计数据。")
 

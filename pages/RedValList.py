@@ -1,129 +1,95 @@
 from __future__ import annotations
 
-import collections
+from collections import Counter
 
-import altair as alt
 import pandas as pd
 import streamlit as st
+st.set_page_config(page_title="Lotto AI", layout="wide")
 
 from db.connection import query_db
 from utils.cache import cached_query
-from utils.data_access import fetch_lottery_info, fetch_playtypes, fetch_recent_issues
+from utils.data_access import fetch_lottery_info, fetch_playtypes_for_issue
+from utils.predictions import build_prediction_distribution
+from utils.ui import issue_picker, playtype_picker, render_rank_position_calculator
 from utils.numbers import parse_tokens
 from utils.sql import make_in_clause
-from utils.ui import download_csv_button
+
 
 st.header("RedValList - 选号分布")
 
-issues = fetch_recent_issues(limit=200)
-if not issues:
-    st.warning("无法获取期号列表。")
-    st.stop()
-
-selected_issue = st.selectbox("选择期号", options=issues)
-
-lottery = fetch_lottery_info(selected_issue)
-if lottery:
-    st.caption(
-        f"开奖号码：{lottery.get('open_code') or '未开奖'}丨和值：{lottery.get('sum')}丨跨度：{lottery.get('span')}"
-    )
-
-# 获取当期出现的玩法
-sql_playtypes = """
-    SELECT DISTINCT ep.playtype_id, pd.playtype_name
-    FROM expert_predictions ep
-    JOIN playtype_dict pd ON pd.playtype_id = ep.playtype_id
-    WHERE ep.issue_name = :issue
-    ORDER BY ep.playtype_id
-"""
-
-try:
-    playtype_rows = cached_query(
-        query_db, sql_playtypes, params={"issue": selected_issue}, ttl=300
-    )
-except Exception as exc:
-    st.warning(f"获取玩法列表失败：{exc}")
-    playtype_rows = []
-
-if not playtype_rows:
-    st.info("当前期未找到玩法数据。")
-    st.stop()
-
-playtype_df = pd.DataFrame(playtype_rows)
-playtype_map = {
-    str(row.playtype_id): row.playtype_name for row in playtype_df.itertuples()
-}
-selected_playtypes = st.multiselect(
-    "选择玩法",
-    options=list(playtype_map.keys()),
-    default=list(playtype_map.keys()),
-    format_func=lambda value: playtype_map.get(value, value),
+selected_issue = issue_picker(
+    "red_val_issue",
+    mode="single",
+    label="期号",
 )
+if not selected_issue:
+    st.stop()
+
+
+playtypes_df = fetch_playtypes_for_issue(selected_issue)
+if playtypes_df.empty:
+    st.info("当前期号下无推荐数据。")
+    st.stop()
+
+playtype_map = {
+    int(row.playtype_id): row.playtype_name for row in playtypes_df.itertuples()
+}
+playtype_ids = [str(pid) for pid in playtype_map.keys()]
+raw_selection = playtype_picker(
+    "red_val_playtype",
+    mode="multi",
+    label="玩法",
+    include=playtype_ids,
+    default=playtype_ids,
+)
+selected_playtypes = [int(pid) for pid in raw_selection]
 
 if not selected_playtypes:
-    st.warning("请选择至少一个玩法。")
+    st.warning("请至少选择一个玩法。")
     st.stop()
 
-clause, params = make_in_clause(
-    "playtype_id", [int(pid) for pid in selected_playtypes], "pt"
-)
+clause, params = make_in_clause("playtype_id", selected_playtypes, "pt")
 params.update({"issue": selected_issue})
 sql = f"""
-    SELECT playtype_id, user_id, num, val, id
+    SELECT playtype_id, user_id, num
     FROM red_val_list
     WHERE issue_name = :issue
       AND {clause}
-    ORDER BY id DESC, playtype_id ASC
-    LIMIT 1000
+    ORDER BY id DESC
 """
 
 try:
-    rows = cached_query(query_db, sql, params=params, ttl=300)
-except Exception as exc:
+    rows = cached_query(query_db, sql, params=params, ttl=120)
+except Exception as exc:  # pragma: no cover - 依赖外部数据库
     st.warning(f"查询选号分布失败：{exc}")
     rows = []
 
+
 if not rows:
-    st.info("未查询到选号分布数据。")
-    st.stop()
+    fallback_rows = build_prediction_distribution(selected_issue, selected_playtypes)
+    if fallback_rows:
+        st.info("未查询到选号分布数据，已根据专家推荐实时生成分布，仅供参考。")
+        rows = fallback_rows
+    else:
+        st.info("当前期号暂无选号分布或预测汇总数据。")
 
-result_df = pd.DataFrame(rows)
-result_df["playtype_name"] = result_df["playtype_id"].apply(
-    lambda pid: playtype_map.get(str(pid), pid)
-)
-
-st.subheader("选号分布明细")
-detail_view = result_df[["playtype_name", "num", "val", "user_id"]]
-st.dataframe(detail_view, use_container_width=True)
-download_csv_button(detail_view, "下载选号分布", "red_val_list_detail")
-
-if lottery:
-    st.subheader("开奖信息")
-    st.json(lottery)
-
-st.subheader("排行榜位置数字统计器")
-digit_counter = collections.Counter()
-for num in result_df["num"]:
-    for digit in parse_tokens(num):
-        digit_counter.update(digit)
-
-if digit_counter:
-    stats_df = pd.DataFrame(
-        {"digit": list(digit_counter.keys()), "count": list(digit_counter.values())}
-    ).sort_values(by="count", ascending=False)
-    st.dataframe(stats_df, use_container_width=True)
-    download_csv_button(stats_df, "下载数字统计", "red_val_list_digits")
-    digit_chart = (
-        alt.Chart(stats_df)
-        .mark_bar()
-        .encode(
-            x=alt.X("digit:N", title="数字"),
-            y=alt.Y("count:Q", title="出现次数"),
-            color=alt.value("#1f77b4"),
-            tooltip=["digit", "count"],
-        )
-        .properties(width=600, height=320)
-    )
-    st.altair_chart(digit_chart, use_container_width=True)
+df = pd.DataFrame(rows)
+if df.empty or "playtype_id" not in df:
+    st.info("当前期号暂无选号分布或预测数据可展示。")
 else:
-    st.info("无法解析号码集合为数字。")
+    df["玩法"] = df["playtype_id"].map(playtype_map)
+    df["号码集合"] = df.get("num", "").astype(str)
+
+    display_df = df[["玩法", "号码集合"]]
+
+    display_df.sort_values(by=["玩法"], inplace=True)
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+    rank_entries: list[tuple[str, list[str]]] = []
+    for _, row in display_df.iterrows():
+        digits = [n.strip() for n in str(row["号码集合"]).split(",") if n.strip()]
+        if digits:
+            rank_entries.append((row["玩法"], digits))
+
+    render_rank_position_calculator(rank_entries, key="red_val_rank")
+

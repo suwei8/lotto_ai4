@@ -2,25 +2,21 @@ from __future__ import annotations
 
 from collections import Counter
 
-import altair as alt
 import pandas as pd
 import streamlit as st
+st.set_page_config(page_title="Lotto AI", layout="wide")
 
 from db.connection import query_db
 from utils.cache import cached_query
 from utils.numbers import normalize_code
-from utils.ui import download_csv_button
+from utils.charts import render_digit_frequency_chart
 
 st.header("HotCold - 开奖冷热分析")
 
 recent_n = st.slider("统计最近多少期", min_value=10, max_value=200, value=30, step=5)
-window_max = max(5, min(50, recent_n // 2))
-window_size = st.slider(
-    "近态对比滑窗长度", min_value=5, max_value=window_max, value=min(10, window_max)
-)
 
 sql = """
-    SELECT issue_name, open_code, open_time
+    SELECT issue_name, open_code, `sum`, span, odd_even_ratio, big_small_ratio, open_time
     FROM lottery_results
     ORDER BY open_time DESC, issue_name DESC
     LIMIT :limit
@@ -48,6 +44,24 @@ st.caption(
     f"统计范围：最近 {len(lottery_df)} 期（最新期 {lottery_df.iloc[0]['issue_name']}）"
 )
 
+history_view = lottery_df[
+    ["issue_name", "open_code", "sum", "span", "odd_even_ratio", "big_small_ratio"]
+].copy()
+history_view.rename(
+    columns={
+        "issue_name": "期号",
+        "open_code": "开奖号码",
+        "sum": "和值",
+        "span": "跨度",
+        "odd_even_ratio": "奇偶比",
+        "big_small_ratio": "大小比",
+    },
+    inplace=True,
+)
+
+st.subheader(f"所选近{len(lottery_df)}期的开奖信息")
+st.dataframe(history_view, width="stretch")
+
 # Overall hot/cold
 all_digits = [digit for digits in lottery_df["digits"] for digit in digits]
 overall_counter = Counter(all_digits)
@@ -60,20 +74,16 @@ overall_df = pd.DataFrame(
 )
 
 st.subheader("总体冷热分布")
-st.dataframe(overall_df, use_container_width=True)
-download_csv_button(overall_df, "下载总体冷热", "hotcold_overall")
+st.dataframe(overall_df, width="stretch")
 
-chart = (
-    alt.Chart(overall_df)
-    .mark_bar()
-    .encode(
-        x=alt.X("digit:N", title="数字"),
-        y=alt.Y("count:Q", title="出现次数"),
-        tooltip=["digit", "count", alt.Tooltip("ratio:Q", format=".2%")],
-    )
-    .properties(width=600, height=300)
+chart = render_digit_frequency_chart(
+    overall_df.rename(columns={"digit": "数字", "count": "出现次数"}),
+    digit_column="数字",
+    count_column="出现次数",
+    tooltip_columns=["ratio"],
 )
-st.altair_chart(chart, use_container_width=True)
+if chart is not None:
+    st.altair_chart(chart, use_container_width=True)
 
 top_k = st.slider("热榜 TopK", min_value=3, max_value=10, value=5)
 
@@ -109,77 +119,17 @@ positions = {
 st.subheader("分位冷热分析")
 cols = st.columns(3)
 for col, (title, data) in zip(cols, positions.items()):
-    col.dataframe(data, use_container_width=True)
-    chart = (
-        alt.Chart(data)
-        .mark_bar()
-        .encode(
-            x=alt.X("digit:N", title=title),
-            y=alt.Y("count:Q"),
-            tooltip=["digit", "count", alt.Tooltip("ratio:Q", format=".2%")],
-        )
-        .properties(width=240, height=240)
+    display_df = data.rename(columns={"digit": "数字", "count": "出现次数"})
+    col.dataframe(display_df, width="stretch")
+    chart = render_digit_frequency_chart(
+        display_df,
+        digit_column="数字",
+        count_column="出现次数",
+        tooltip_columns=["ratio"],
+        width=240,
+        height=240,
     )
-    col.altair_chart(chart, use_container_width=True)
-
-# Trend comparison
-if len(lottery_df) >= window_size * 2:
-    recent_window = lottery_df.iloc[:window_size]
-    previous_window = lottery_df.iloc[window_size : window_size * 2]
-
-    def window_counter(df: pd.DataFrame) -> Counter:
-        digits = [digit for digits in df["digits"] for digit in digits]
-        return Counter(digits)
-
-    recent_counter = window_counter(recent_window)
-    previous_counter = window_counter(previous_window)
-    trend_records = []
-    for digit in map(str, range(10)):
-        diff = recent_counter.get(digit, 0) - previous_counter.get(digit, 0)
-        trend_records.append({"digit": digit, "diff": diff})
-    trend_df = pd.DataFrame(trend_records)
-    st.subheader("近态对比（总位）")
-    trend_chart = (
-        alt.Chart(trend_df)
-        .mark_bar()
-        .encode(
-            x="digit:N",
-            y="diff:Q",
-            color=alt.condition(
-                "datum.diff>0", alt.value("#ff7f0e"), alt.value("#1f77b4")
-            ),
-        )
-        .properties(width=600, height=300)
-    )
-    st.altair_chart(trend_chart, use_container_width=True)
-
-    position_trend_records = []
-    position_columns = [("hundreds", "百位"), ("tens", "十位"), ("units", "个位")]
-    for column, label in position_columns:
-        recent_counter = Counter(recent_window[column])
-        previous_counter = Counter(previous_window[column])
-        for digit in map(str, range(10)):
-            diff = recent_counter.get(digit, 0) - previous_counter.get(digit, 0)
-            position_trend_records.append(
-                {"digit": digit, "diff": diff, "position": label}
-            )
-    position_trend_df = pd.DataFrame(position_trend_records)
-    pos_chart = (
-        alt.Chart(position_trend_df)
-        .mark_bar()
-        .encode(
-            x=alt.X("digit:N", title="数字"),
-            y=alt.Y("diff:Q", title="频次差"),
-            column=alt.Column("position:N", title="位置"),
-            color=alt.condition(
-                "datum.diff>0", alt.value("#2ca02c"), alt.value("#d62728")
-            ),
-            tooltip=["position", "digit", "diff"],
-        )
-        .properties(width=160, height=260)
-    )
-    st.altair_chart(pos_chart, use_container_width=True)
-else:
-    st.info("样本不足，无法计算近态对比。")
+    if chart is not None:
+        col.altair_chart(chart, use_container_width=True)
 
 st.caption("冷热分析仅供参考，不构成投注建议。")

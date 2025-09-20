@@ -15,6 +15,7 @@ from utils.data_access import (
     fetch_playtypes,
 )
 from utils.numbers import match_prediction_hit, normalize_code, parse_tokens
+from utils.charts import render_digit_frequency_chart
 from utils.sql import make_in_clause
 
 
@@ -443,22 +444,15 @@ if "uehs_records" in st.session_state:
             st.markdown(
                 f"#### 🎯 推荐数字出现频次热力图（共 {len(freq_df)} 个数字，命中：{hit_digit_count} 个）"
             )
-            chart = (
-                alt.Chart(freq_df)
-                .mark_bar()
-                .encode(
-                    x=alt.X("出现次数:Q", title="出现次数"),
-                    y=alt.Y("数字:N", sort=freq_df["数字"].tolist(), title="推荐数字", axis=alt.Axis(labelFontSize=14)),
-                    color=alt.condition(
-                        alt.datum.是否命中 == "✅",
-                        alt.value("#3498db"),
-                        alt.value("#e74c3c"),
-                    ),
-                    tooltip=["数字", "出现次数", "是否命中"],
-                )
-                .properties(height=min(40 * len(freq_df), 800))
+            chart = render_digit_frequency_chart(
+                freq_df.rename(columns={"出现次数": "被推荐次数"}),
+                digit_column="数字",
+                count_column="被推荐次数",
+                hit_digits=open_digits if has_open_code else None,
+                height=min(40 * len(freq_df), 800),
             )
-            st.altair_chart(chart, use_container_width=True)
+            if chart is not None:
+                st.altair_chart(chart, use_container_width=True)
         else:
             st.info("暂无推荐数字统计数据。")
 

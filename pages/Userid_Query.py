@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
+st.set_page_config(page_title="Lotto AI", layout="wide")
 
 from db.connection import query_db
 from utils.cache import cached_query
-from utils.data_access import fetch_experts, fetch_recent_issues
-from utils.ui import download_csv_button
+from utils.ui import issue_picker, expert_picker, render_open_info
 
 PLAYTYPE_ORDER = [
     "独胆",
@@ -32,17 +32,22 @@ def _playtype_sort_key(name: str) -> int:
 
 st.header("Userid_Query - 按期号查看专家推荐")
 
-issues = fetch_recent_issues(limit=200)
-if not issues:
-    st.warning("未能获取期号列表。")
+selected_issue = issue_picker(
+    "userid_query_issue",
+    mode="single",
+    label="选择期号",
+)
+if not selected_issue:
     st.stop()
 
-selected_issue = st.selectbox("选择期号", options=issues)
+render_open_info(selected_issue, key="userid_query_open", show_metrics=False)
 
-experts = fetch_experts(limit=500)
-expert_map = {str(row.user_id): row.nick_name for row in experts.itertuples()}
-default_user = next(iter(expert_map.keys()), "")
-user_id = st.text_input("输入专家 user_id", value=default_user)
+user_id, expert_map = expert_picker(
+    "userid_query_expert",
+    issue=selected_issue,
+    allow_manual=True,
+    manual_label="或手动输入专家 user_id",
+)
 if not user_id:
     st.info("请输入专家 user_id。")
     st.stop()
@@ -50,6 +55,8 @@ if not user_id:
 nick_name = expert_map.get(user_id)
 if nick_name:
     st.caption(f"专家昵称：{nick_name}")
+else:
+    st.caption("专家昵称：未收录，仍可查询推荐记录")
 
 sql_predictions = """
     SELECT
@@ -74,27 +81,7 @@ if predictions:
     df["sort_key"] = df["playtype_name"].apply(_playtype_sort_key)
     df.sort_values(by=["sort_key", "playtype_name"], inplace=True)
     df.drop(columns=["sort_key"], inplace=True)
-    st.dataframe(df, use_container_width=True)
-    download_csv_button(df, "下载推荐", "userid_query_recommendations")
+    st.dataframe(df, width="stretch")
 else:
     st.info("未查询到该专家在该期的推荐记录。")
 
-sql_lottery = """
-    SELECT open_code, `sum`, span, odd_even_ratio, big_small_ratio, open_time
-    FROM lottery_results
-    WHERE issue_name = :issue_name
-    LIMIT 1
-"""
-try:
-    lottery_rows = cached_query(
-        query_db, sql_lottery, params={"issue_name": selected_issue}, ttl=300
-    )
-except Exception as exc:
-    st.warning(f"获取开奖信息失败：{exc}")
-    lottery_rows = []
-
-if lottery_rows:
-    st.subheader("开奖信息")
-    st.json(lottery_rows[0])
-else:
-    st.info("未找到该期的开奖信息。")

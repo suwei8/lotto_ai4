@@ -1,17 +1,17 @@
 /*
  Navicat Premium Data Transfer
 
- Source Server         : docker-mysql8
+ Source Server         : 悉尼彩票开发机
  Source Server Type    : MySQL
  Source Server Version : 80036 (8.0.36)
- Source Host           : localhost:3306
+ Source Host           : 140.238.195.36:3306
  Source Schema         : lotto_3d
 
  Target Server Type    : MySQL
  Target Server Version : 80036 (8.0.36)
  File Encoding         : 65001
 
- Date: 18/09/2025 12:52:58
+ Date: 20/09/2025 14:36:03
 */
 
 SET NAMES utf8mb4;
@@ -25,14 +25,15 @@ CREATE TABLE `expert_hit_stat`  (
   `id` int NOT NULL AUTO_INCREMENT,
   `issue_name` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `user_id` int NOT NULL,
-  `playtype_name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `playtype_id` int NOT NULL,
   `total_count` int NULL DEFAULT 0,
   `hit_count` int NULL DEFAULT 0,
   `hit_number_count` int NULL DEFAULT 0,
   `avg_hit_gap` float NULL DEFAULT NULL,
   PRIMARY KEY (`id`, `issue_name`) USING BTREE,
-  INDEX `idx_issue_name`(`issue_name` ASC) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 10854460 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Dynamic;
+  INDEX `idx_issue_name`(`issue_name` ASC) USING BTREE,
+  INDEX `idx_expert_hit_stat_playtype_id`(`playtype_id` ASC) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 10854460 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
 -- Table structure for expert_info
@@ -57,7 +58,7 @@ CREATE TABLE `expert_predictions`  (
   `numbers` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL,
   PRIMARY KEY (`id`, `issue_name`) USING BTREE,
   INDEX `idx_user_id`(`user_id` ASC) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 5215990 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 5215990 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
 -- Table structure for lottery_results
@@ -84,7 +85,7 @@ CREATE TABLE `playtype_dict`  (
   `lottery_id` int NOT NULL,
   `playtype_id` int NOT NULL,
   `playtype_name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
-) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
 -- Table structure for red_val_list
@@ -98,7 +99,7 @@ CREATE TABLE `red_val_list`  (
   `issue_name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '期号',
   `num` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL COMMENT '号码集合',
   `val` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL COMMENT '权重集合'
-) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
 -- Table structure for red_val_list_v2
@@ -121,6 +122,6 @@ CREATE TABLE `red_val_list_v2`  (
   `max_series_not_hit_count_map` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL COMMENT 'maxSeriesNotHitCount分布统计（JSON格式）',
   `his_max_serial_hit_count_map` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL COMMENT 'hisMaxSerialHitCount分布统计（JSON格式）',
   `his_max_series_not_hit_count_map` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL COMMENT 'hisMaxSeriesNotHitCount分布统计（JSON格式）'
-) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = DYNAMIC;
 
 SET FOREIGN_KEY_CHECKS = 1;

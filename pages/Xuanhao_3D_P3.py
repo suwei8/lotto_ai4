@@ -1,318 +1,254 @@
-from __future__ import annotations
-
-import itertools
-from typing import Iterable, List, Sequence, Tuple
-
-import pandas as pd
+# pages/Xuanhao_3D_P3.py
+# 组选/直选号码生成器 + 盈利模拟
 import streamlit as st
+from itertools import combinations, product, permutations
 
+st.set_page_config("🎰 老苏组选/直选号码生成器", layout="wide")
+st.title("🎰 老苏组选/直选号码生成器 + 盈利模拟")
 
-def sum_digits(combo: Sequence[int]) -> int:
-    return sum(combo)
+mode = st.selectbox("选号模式", ["组选", "直选"])
+# ===== 高级过滤器设置（保留原选号逻辑）=====
+st.markdown("🔍 **高级过滤条件扩展（和值/跨度/奇偶/大小/连号）**")
+col1, col2 = st.columns(2)
+with col1:
+    sum_filters = st.multiselect("和值过滤（排除）", list(range(28)), default=[])
+    sum_range = st.slider("和值范围（保留）", 0, 27, (0, 27))
+with col2:
+    span_filters = st.multiselect("跨度过滤（排除）", list(range(10)), default=[])
+    span_range = st.slider("跨度范围（保留）", 0, 9, (0, 9))
 
+col3, col4 = st.columns(2)
+with col3:
+    allowed_odd_even = st.multiselect("奇偶比（保留）", ["3:0", "2:1", "1:2", "0:3"], default=[])
+with col4:
+    allowed_big_small = st.multiselect("大小比（保留）", ["3:0", "2:1", "1:2", "0:3"], default=[])
 
-def span_digits(combo: Sequence[int]) -> int:
-    return max(combo) - min(combo)
+exclude_lianhao = st.checkbox("❌ 排除包含连续数字组合", value=False)
 
+# ===== 组选输入 =====
+if mode == "组选":
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        group_type = st.selectbox("组选类型", ["组六", "组三"])
+    with col2:
+        include_digits = st.multiselect("包含数字", list(range(10)), default=[9])
+    with col3:
+        exclude_digits = st.multiselect("排除数字", list(range(10)), default=[])
 
-def ratio(combo: Sequence[int], predicate) -> str:
-    count = sum(1 for d in combo if predicate(d))
-    return f"{count}:{len(combo) - count}"
+# ===== 直选输入 =====
+if mode == "直选":
+    col_f3, col_f4, col_f5 = st.columns(3)
+    with col_f3:
+        filter_group3 = st.checkbox("过滤组三", value=False)
+    with col_f4:
+        filter_baozi = st.checkbox("过滤豹子", value=False)
+    with col_f5:
+        filter_group6 = st.checkbox("过滤组六", value=False)
 
+    st.markdown("📍 **设置直选每一位上的候选数字**")
+    col_b, col_s, col_g = st.columns(3)
+    with col_b:
+        bai_list = st.multiselect("百位", list(range(10)), default=list(range(10)))
+    with col_s:
+        shi_list = st.multiselect("十位", list(range(10)), default=list(range(10)))
+    with col_g:
+        ge_list = st.multiselect("个位", list(range(10)), default=list(range(10)))
 
-def has_consecutive(combo: Sequence[int]) -> bool:
-    sorted_digits = sorted(combo)
-    return any(b - a == 1 for a, b in zip(sorted_digits, sorted_digits[1:]))
+    st.markdown("🔍 **过滤条件（任选）**")
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        include_digits = st.multiselect("包含数字", list(range(10)), default=[])
+    with col_f2:
+        exclude_digits = st.multiselect("排除数字", list(range(10)), default=[])
 
+# ===== 生成函数 =====
+def generate_group6(include_digits, exclude):
+    result = []
+    for d in include_digits:
+        pool = [x for x in range(10) if x != d and x not in exclude]
+        result += [tuple(sorted((a, b, d))) for a, b in combinations(pool, 2)]
+    return sorted(set(result))
 
-def apply_filters(
-    combos: Iterable[Tuple[int, int, int]],
-    exclude_sums: set[int],
-    sum_range: Tuple[int, int],
-    exclude_span: set[int],
-    span_range: Tuple[int, int],
-    odd_even_keep: set[str],
-    big_small_keep: set[str],
-    exclude_consecutive: bool,
-) -> List[Tuple[int, int, int]]:
-    result: List[Tuple[int, int, int]] = []
-    for combo in combos:
-        digits = tuple(combo)
-        total = sum_digits(digits)
-        if exclude_sums and total in exclude_sums:
+def get_odd_even_ratio(digits):
+    odd = sum(1 for d in digits if d % 2 == 1)
+    even = 3 - odd
+    return f"{odd}:{even}"
+
+def get_big_small_ratio(digits):
+    big = sum(1 for d in digits if d >= 5)
+    small = 3 - big
+    return f"{big}:{small}"
+
+def has_consecutive(digits):
+    digits = sorted(digits)
+    return any(digits[i + 1] - digits[i] == 1 for i in range(2))
+
+def filter_advanced(numbers):
+    result = []
+    for code in numbers:
+        digits = list(code)
+        s = sum(digits)
+        sp = max(digits) - min(digits)
+        if s in sum_filters or sp in span_filters:
             continue
-        if not (sum_range[0] <= total <= sum_range[1]):
+        if not (sum_range[0] <= s <= sum_range[1]):
             continue
-        span = span_digits(digits)
-        if exclude_span and span in exclude_span:
+        if not (span_range[0] <= sp <= span_range[1]):
             continue
-        if not (span_range[0] <= span <= span_range[1]):
+        if allowed_odd_even and get_odd_even_ratio(digits) not in allowed_odd_even:
             continue
-        odd_even = ratio(digits, lambda d: d % 2 == 1)
-        big_small = ratio(digits, lambda d: d >= 5)
-        if odd_even_keep and odd_even not in odd_even_keep:
+        if allowed_big_small and get_big_small_ratio(digits) not in allowed_big_small:
             continue
-        if big_small_keep and big_small not in big_small_keep:
+        if exclude_lianhao and has_consecutive(digits):
             continue
-        if exclude_consecutive and has_consecutive(digits):
-            continue
-        result.append(digits)
+        result.append(code)
     return result
 
+def generate_group3(include_digits, exclude):
+    result = []
+    for d in include_digits:
+        pool = [x for x in range(10) if x != d and x not in exclude]
+        for x in pool:
+            result.append(tuple(sorted([d, d, x])))
+            result.append(tuple(sorted([x, x, d])))
+    return sorted(set(result))
 
-def generate_zu6(include: set[int], exclude: set[int]) -> List[Tuple[int, int, int]]:
-    pool = (set(range(10)) - exclude) | include
-    combos = [tuple(sorted(c)) for c in itertools.combinations(sorted(pool), 3)]
-    if include:
-        combos = [c for c in combos if include.issubset(set(c))]
-    return combos
-
-
-def generate_zu3(include: set[int], exclude: set[int]) -> List[Tuple[int, int, int]]:
-    pool = (set(range(10)) - exclude) | include
-    combos: List[Tuple[int, int, int]] = []
-    for repeated in pool:
-        for single in pool - {repeated}:
-            combo = tuple(sorted((repeated, repeated, single)))
-            if include and not include.issubset(set(combo)):
-                continue
-            combos.append(combo)
-    return list({combo for combo in combos})
-
-
-def generate_direct(
-    hundreds: Sequence[int],
-    tens: Sequence[int],
-    units: Sequence[int],
-    filter_zu3: bool,
-    filter_baozi: bool,
-    filter_zu6: bool,
-    include_digits: set[int],
-    exclude_digits: set[int],
-) -> List[Tuple[int, int, int]]:
-    combos: List[Tuple[int, int, int]] = []
-    for h, t, u in itertools.product(hundreds, tens, units):
-        digits = (h, t, u)
-        unique = len(set(digits))
-        if filter_baozi and unique == 1:
+def generate_zhixuan(bai, shi, ge, include_digits=None, exclude_digits=None,
+                      filter_group3=False, filter_baozi=False, filter_group6=False):
+    include_digits = include_digits or []
+    exclude_digits = exclude_digits or []
+    result = []
+    for b, s, g in product(bai, shi, ge):
+        digits = [b, s, g]
+        if include_digits and not any(d in digits for d in include_digits):
             continue
-        if filter_zu3 and unique == 2:
+        if any(d in digits for d in exclude_digits):
             continue
-        if filter_zu6 and unique == 3:
+        if filter_group3 and (b == s or s == g or b == g) and not (b == s == g):
             continue
-        if include_digits and not include_digits.intersection(digits):
+        if filter_baozi and b == s == g:
             continue
-        if exclude_digits and exclude_digits.intersection(digits):
+        if filter_group6 and len(set(digits)) == 3:
             continue
-        combos.append(digits)
-    return combos
+        result.append((b, s, g))
+    return result
 
-
-def format_combo(combo: Tuple[int, int, int]) -> str:
-    return "".join(str(d) for d in combo)
-
-
-st.header("Xuanhao 3D / P3 选号器")
-mode = st.radio("选号模式", options=("组选", "直选"), horizontal=True)
-
-sum_exclude = set(st.multiselect("排除和值", options=list(range(28))))
-sum_min, sum_max = st.slider("和值范围", 0, 27, (0, 27))
-span_exclude = set(st.multiselect("排除跨度", options=list(range(10))))
-span_min, span_max = st.slider("跨度范围", 0, 9, (0, 9))
-odd_even = set(st.multiselect("保留奇偶比", options=["3:0", "2:1", "1:2", "0:3"]))
-big_small = set(st.multiselect("保留大小比", options=["3:0", "2:1", "1:2", "0:3"]))
-exclude_consecutive = st.checkbox("排除连号", value=False)
-
-combos: List[Tuple[int, int, int]] = []
-mode_description = ""
-bonus_per_bet = 0
-
+# ===== 生成号码 =====
+numbers = []
 if mode == "组选":
-    zu_type = st.selectbox("组选类型", options=("组六", "组三"))
-    include_digits = set(
-        int(d) for d in st.multiselect("包含数字", options=list(range(10)))
-    )
-    exclude_digits = set(
-        int(d) for d in st.multiselect("排除数字", options=list(range(10)))
-    )
-    if zu_type == "组六":
-        source = generate_zu6(include_digits, exclude_digits)
-        bonus_per_bet = 280
-        mode_description = "组六"
+    if group_type == "组六":
+        numbers = generate_group6(include_digits, exclude_digits)
+        numbers = filter_advanced(numbers)
+        prize_per_win = 280
     else:
-        source = generate_zu3(include_digits, exclude_digits)
-        bonus_per_bet = 550
-        mode_description = "组三"
-    combos = apply_filters(
-        source,
-        sum_exclude,
-        (sum_min, sum_max),
-        span_exclude,
-        (span_min, span_max),
-        odd_even,
-        big_small,
-        exclude_consecutive,
-    )
+        numbers = generate_group3(include_digits, exclude_digits)
+        numbers = filter_advanced(numbers)
+        prize_per_win = 550
 else:
-    filter_zu3 = st.checkbox("过滤组三", value=False)
-    filter_baozi = st.checkbox("过滤豹子", value=False)
-    filter_zu6 = st.checkbox("过滤组六", value=False)
-    hundreds = st.multiselect(
-        "百位候选", options=list(range(10)), default=list(range(10))
+    numbers = generate_zhixuan(
+        bai_list,
+        shi_list,
+        ge_list,
+        include_digits,
+        exclude_digits,
+        filter_group3=filter_group3,
+        filter_baozi=filter_baozi,
+        filter_group6=filter_group6,
     )
-    tens = st.multiselect("十位候选", options=list(range(10)), default=list(range(10)))
-    units = st.multiselect("个位候选", options=list(range(10)), default=list(range(10)))
-    include_digits = set(
-        int(d) for d in st.multiselect("至少包含数字", options=list(range(10)))
-    )
-    exclude_digits = set(
-        int(d) for d in st.multiselect("排除出现数字", options=list(range(10)))
-    )
-    if not hundreds or not tens or not units:
-        st.warning("请为百位、十位、个位至少选择一个数字。")
-        combos = []
+    numbers = filter_advanced(numbers)
+    prize_per_win = 1700
+
+# ===== 倍数与成本 =====
+col1, col2 = st.columns(2)
+with col1:
+    group_multiplier = st.number_input("组选倍数", min_value=0, max_value=100000, value=2)
+with col2:
+    zhixuan_multiplier = st.number_input("直选倍数", min_value=0, max_value=100000, value=1)
+
+group_count = len(numbers) * group_multiplier
+zhixuan_count = len(numbers) * zhixuan_multiplier
+total_count = group_count + zhixuan_count
+bet_cost = total_count * 2
+
+# ===== 奖金估算 =====
+group_bonus = 0
+zhixuan_bonus = 0
+bonus_note = ""
+if mode == "组选":
+    if group_multiplier > 0:
+        group_bonus = group_multiplier * (280 if group_type == "组六" else 550)
+        if zhixuan_multiplier > 0:
+            zhixuan_bonus = zhixuan_multiplier * 1700
+            bonus_note = "假设组选与直选各命中1注"
+        else:
+            bonus_note = "假设组选命中1注"
+    elif zhixuan_multiplier > 0:
+        zhixuan_bonus = zhixuan_multiplier * 1700
+        bonus_note = "假设直选命中1注"
     else:
-        source = generate_direct(
-            hundreds,
-            tens,
-            units,
-            filter_zu3,
-            filter_baozi,
-            filter_zu6,
-            include_digits,
-            exclude_digits,
-        )
-        combos = apply_filters(
-            source,
-            sum_exclude,
-            (sum_min, sum_max),
-            span_exclude,
-            (span_min, span_max),
-            odd_even,
-            big_small,
-            exclude_consecutive,
-        )
-    bonus_per_bet = 0  # 直选奖金单独计算
-    mode_description = "直选"
+        bonus_note = "无奖金（无投注）"
+else:
+    if zhixuan_multiplier > 0:
+        zhixuan_bonus = zhixuan_multiplier * 1700
+        if group_multiplier > 0:
+            group_bonus = group_multiplier * 280
+            bonus_note = "假设组选与直选各命中1注"
+        else:
+            bonus_note = "假设直选命中1注"
+    elif group_multiplier > 0:
+        group_bonus = group_multiplier * 280
+        bonus_note = "假设组选命中1注"
+    else:
+        bonus_note = "无奖金（无投注）"
 
-max_display = 5000
-if len(combos) > max_display:
-    st.warning(
-        f"组合数量较大（{len(combos)} 条），仅展示前 {max_display} 条。请收紧过滤条件。"
-    )
-combos = combos[:max_display]
+bonus_total = group_bonus + zhixuan_bonus
+profit = bonus_total - bet_cost
 
-combos_df = pd.DataFrame(
-    [
-        {
-            "组合": format_combo(combo),
-            "和值": sum_digits(combo),
-            "跨度": span_digits(combo),
-            "奇偶比": ratio(combo, lambda d: d % 2 == 1),
-            "大小比": ratio(combo, lambda d: d >= 5),
-            "有连号": has_consecutive(combo),
-        }
-        for combo in combos
-    ]
-)
-
-st.subheader("生成组合")
-st.dataframe(combos_df, use_container_width=True)
-
-st.subheader("组合导出")
+# ===== 文本输出 =====
+number_str_list = ["".join(map(str, row)) for row in numbers]
+number_text = ",".join(number_str_list)
 st.text_area(
-    "组合列表",
-    value=", ".join(combos_df["组合"].tolist()),
-    height=120,
+    "生成号码（可复制）",
+    f"{number_text} 共{len(numbers)}注，组选{group_multiplier}倍，直选{zhixuan_multiplier}倍，{bet_cost}元",
+    height=100,
 )
 
+st.markdown(f"**投注注数：{total_count} 注（组选 {group_count} 注 + 直选 {zhixuan_count} 注）**")
+st.markdown(f"**投注成本：{bet_cost} 元**")
+st.markdown(f"**奖金合计：{bonus_total} 元（{bonus_note}）**")
+st.markdown(f"**纯收益：{'盈利' if profit >= 0 else '亏损'} {abs(profit)} 元**")
+
+# ===== 定位调整器 =====
 if mode == "组选":
-    st.subheader("定位调整器")
-    hundred_filter = set(
-        int(d)
-        for d in st.multiselect(
-            "百位需包含", options=list(range(10)), key="hundred_filter"
+    with st.expander("🎯 指定百/十/个位数字进行定位调整（批量变换器）", expanded=False):
+        col_bai, col_shi, col_ge = st.columns(3)
+        with col_bai:
+            bai_digits = st.multiselect("百位应包含", list(range(10)), default=[], key="pos_bai")
+        with col_shi:
+            shi_digits = st.multiselect("十位应包含", list(range(10)), default=[], key="pos_shi")
+        with col_ge:
+            ge_digits = st.multiselect("个位应包含", list(range(10)), default=[], key="pos_ge")
+
+        index_map = {0: bai_digits, 1: shi_digits, 2: ge_digits}
+        use_position_filter = any(index_map.values())
+
+        if use_position_filter:
+            adjusted = []
+            for code in numbers:
+                digits = list(code)
+                for perm in set(permutations(digits)):
+                    if all(not index_map[i] or perm[i] in index_map[i] for i in range(3)):
+                        adjusted.append("".join(map(str, perm)))
+                        break
+                else:
+                    adjusted.append("".join(map(str, code)))
+            result_text = ",".join(adjusted)
+        else:
+            result_text = number_text
+
+        tail_note = f"共{len(numbers)}注，组选{group_multiplier}倍，直选{zhixuan_multiplier}倍，{bet_cost}元"
+        st.text_area(
+            "✅ 定位调整后排列（可复制）",
+            f"{result_text} {tail_note}",
+            height=100,
         )
-    )
-    ten_filter = set(
-        int(d)
-        for d in st.multiselect("十位需包含", options=list(range(10)), key="ten_filter")
-    )
-    unit_filter = set(
-        int(d)
-        for d in st.multiselect(
-            "个位需包含", options=list(range(10)), key="unit_filter"
-        )
-    )
-
-    adjusted: List[str] = []
-    for combo in combos:
-        matched = None
-        for perm in set(itertools.permutations(combo)):
-            if hundred_filter and perm[0] not in hundred_filter:
-                continue
-            if ten_filter and perm[1] not in ten_filter:
-                continue
-            if unit_filter and perm[2] not in unit_filter:
-                continue
-            matched = perm
-            break
-        adjusted.append(format_combo(matched or combo))
-
-    st.text_area("定位调整结果", value=", ".join(adjusted), height=120)
-
-st.subheader("全排列转换（组选）")
-permutation_enabled = st.checkbox("启用全排列转换", value=False)
-max_permutations = 5000
-permutation_results: List[str] = []
-
-if permutation_enabled:
-    for combo in combos:
-        digits = list(combo)
-        if len(digits) > 6:
-            continue
-        perms = {"".join(p) for p in itertools.permutations(digits)}
-        permutation_results.extend(sorted(perms))
-        if len(permutation_results) >= max_permutations:
-            break
-    permutation_results = permutation_results[:max_permutations]
-    if permutation_results:
-        st.write(
-            f"展示前 {len(permutation_results)} 项全排列结果（上限 {max_permutations}）。"
-        )
-        st.text_area("全排列列表", value=", ".join(permutation_results), height=120)
-    else:
-        st.info("未生成任何全排列结果（可能组合位数过大）。")
-
-st.subheader("投注与收益估算")
-if mode == "组选":
-    default_group = 1
-    default_direct = 0
-else:
-    default_group = 0
-    default_direct = 1
-
-group_multiplier = st.number_input("组选倍数", min_value=0, value=default_group, step=1)
-direct_multiplier = st.number_input(
-    "直选倍数", min_value=0, value=default_direct, step=1
-)
-
-group_bonus = bonus_per_bet
-
-group_bets = len(combos) * group_multiplier
-permutation_base = (
-    len(permutation_results)
-    if permutation_enabled and permutation_results
-    else len(combos)
-)
-direct_bets = permutation_base * direct_multiplier
-
-total_bets = group_bets + direct_bets
-cost = total_bets * 2
-reward = group_multiplier * group_bonus + direct_multiplier * 1700
-profit = reward - cost
-
-st.write(
-    f"模式：{mode_description}丨组合数：{len(combos)}丨排列数：{permutation_base}丨组选倍数：{group_multiplier}丨直选倍数：{direct_multiplier}"
-)
-st.write(f"预计投入：¥{cost:.2f}丨假设命中奖金：¥{reward:.2f}丨收益：¥{profit:.2f}")

@@ -9,14 +9,35 @@ from utils.cache import cached_query
 
 
 def fetch_recent_issues(limit: int = 200) -> List[str]:
-    sql = """
+    marker = ""
+    try:
+        latest = query_db("SELECT MAX(issue_name) AS max_issue FROM expert_predictions")
+        marker = (latest[0]["max_issue"] or "") if latest else ""
+    except Exception:
+        marker = ""
+
+    sql = f"""
+    /* latest_prediction: {marker} */
     SELECT issue_name
-    FROM lottery_results
-    ORDER BY open_time DESC, issue_name DESC
+    FROM (
+        SELECT issue_name, open_time
+        FROM lottery_results
+        UNION ALL
+        SELECT issue_name, NULL AS open_time
+        FROM expert_predictions
+    ) AS merged
+    GROUP BY issue_name
+    ORDER BY issue_name DESC, COALESCE(MAX(open_time), '1970-01-01') DESC
     LIMIT :limit
     """
     try:
-        rows = cached_query(query_db, sql, params={"limit": int(limit)}, ttl=300)
+        rows = cached_query(
+            query_db,
+            sql,
+            params={"limit": int(limit)},
+            ttl=300,
+            extra_key=marker,
+        )
     except Exception:
         return []
     return [row["issue_name"] for row in rows]
