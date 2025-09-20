@@ -4,7 +4,7 @@ import logging
 
 import streamlit as st
 
-from app_sections import (
+from components import (
     render_connection_overview,
     render_data_board,
     render_error_log,
