@@ -40,5 +40,54 @@ Thumbs.db
 # 日志与临时
 logs/
 .env
+.env.local
+.env.*.local
 .ruff_cache/
 .mypy_cache/
+
+# 数据库相关
+*.sql.gz
+*.dump
+
+# 编辑器备份文件
+*~
+.*.sw[op]
+.swp
+
+# 操作系统文件
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 包管理器
+poetry.lock
+Pipfile.lock
+.pdm.toml
+
+# 调试和开发工具
+.coverage.*
+.cache
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.vscode
+.idea
+
+# Node.js相关 (如果有前端组件)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 日志文件
+*.log
+logs/
+*.log.*
+
+# 临时文件
+*.tmp
+*.temp
+*~
