@@ -158,7 +158,7 @@ def fetch_predicted_issues(limit: int = 200) -> list[str]:
     return [row["issue_name"] for row in rows]
 
 
-def fetch_lottery_info(issue: str) -> dict[str, object] | None:
+def fetch_lottery_info(issue: str, ttl: int | None = 120) -> dict[str, object] | None:
     sql = """
     SELECT issue_name, open_code, `sum`, span, odd_even_ratio, big_small_ratio, open_time
     FROM lottery_results
@@ -166,14 +166,17 @@ def fetch_lottery_info(issue: str) -> dict[str, object] | None:
     LIMIT 1
     """
     try:
-        rows = cached_query(query_db, sql, params={"issue": issue}, ttl=120)
+        if ttl is None:
+            rows = query_db(sql, {"issue": issue})
+        else:
+            rows = cached_query(query_db, sql, params={"issue": issue}, ttl=ttl)
     except Exception:
         logger.exception("fetch_lottery_info failed (issue=%s)", issue)
         return None
     return rows[0] if rows else None
 
 
-def fetch_lottery_infos(issues: Sequence[str]) -> dict[str, dict[str, object]]:
+def fetch_lottery_infos(issues: Sequence[str], ttl: int | None = 120) -> dict[str, dict[str, object]]:
     if not issues:
         return {}
     placeholders = ", ".join([":issue_" + str(idx) for idx in range(len(issues))])
@@ -184,7 +187,10 @@ def fetch_lottery_infos(issues: Sequence[str]) -> dict[str, dict[str, object]]:
     """
     params = {f"issue_{idx}": issue for idx, issue in enumerate(issues)}
     try:
-        rows = cached_query(query_db, sql, params=params, ttl=120)
+        if ttl is None:
+            rows = query_db(sql, params)
+        else:
+            rows = cached_query(query_db, sql, params=params, ttl=ttl)
     except Exception:
         logger.exception("fetch_lottery_infos failed (issues=%s)", list(issues))
         return {}
@@ -194,22 +200,43 @@ def fetch_lottery_infos(issues: Sequence[str]) -> dict[str, dict[str, object]]:
 def fetch_predictions(
     issues: Sequence[str],
     playtype_ids: Iterable[int] | None = None,
+    user_ids: Iterable[int] | None = None,
+    columns: Sequence[str] | None = None,
+    *,
     limit: int | None = None,
+    order_by: str = "issue_name DESC",
+    ttl: int | None = 300,
 ) -> pd.DataFrame:
+    default_columns = ["issue_name", "playtype_id", "user_id", "numbers"]
     if not issues:
-        return pd.DataFrame(columns=["issue_name", "playtype_id", "user_id", "numbers"])
+        return pd.DataFrame(columns=columns or default_columns)
 
-    issue_placeholders = ", ".join([":issue_" + str(idx) for idx in range(len(issues))])
-    params: dict[str, object] = {f"issue_{idx}": issue for idx, issue in enumerate(issues)}
+    select_columns = list(columns) if columns else default_columns
+    allowed_columns = {"issue_name", "playtype_id", "user_id", "numbers"}
+    invalid_columns = set(select_columns) - allowed_columns
+    if invalid_columns:
+        raise ValueError(f"Unsupported columns requested: {sorted(invalid_columns)}")
 
+    issue_values = list(dict.fromkeys(issues))
+    issue_placeholders = ", ".join([":issue_" + str(idx) for idx in range(len(issue_values))])
+    params: dict[str, object] = {f"issue_{idx}": issue for idx, issue in enumerate(issue_values)}
     conditions = [f"issue_name IN ({issue_placeholders})"]
 
     if playtype_ids is not None:
-        playtype_ids = list(playtype_ids)
-        if playtype_ids:
-            pt_placeholders = ", ".join([":pt_" + str(idx) for idx in range(len(playtype_ids))])
-            conditions.append(f"playtype_id IN ({pt_placeholders})")
-            params.update({f"pt_{idx}": pt for idx, pt in enumerate(playtype_ids)})
+        playtype_list = [int(pid) for pid in playtype_ids]
+        if not playtype_list:
+            return pd.DataFrame(columns=select_columns)
+        pt_placeholders = ", ".join([":pt_" + str(idx) for idx in range(len(playtype_list))])
+        conditions.append(f"playtype_id IN ({pt_placeholders})")
+        params.update({f"pt_{idx}": pid for idx, pid in enumerate(playtype_list)})
+
+    if user_ids is not None:
+        user_list = [int(uid) for uid in user_ids]
+        if not user_list:
+            return pd.DataFrame(columns=select_columns)
+        user_placeholders = ", ".join([":uid_" + str(idx) for idx in range(len(user_list))])
+        conditions.append(f"user_id IN ({user_placeholders})")
+        params.update({f"uid_{idx}": uid for idx, uid in enumerate(user_list)})
 
     limit_clause = ""
     if limit is not None:
@@ -217,22 +244,34 @@ def fetch_predictions(
         params["limit"] = int(limit)
 
     sql = """
-    SELECT issue_name, playtype_id, user_id, numbers
+    SELECT {select_clause}
     FROM expert_predictions
     WHERE {conditions}
-    ORDER BY issue_name DESC
+    ORDER BY {order_by}
     {limit_clause}
-    """
-    sql = sql.format(conditions=" AND ".join(conditions), limit_clause=limit_clause)
+    """.format(
+        select_clause=", ".join(select_columns),
+        conditions=" AND ".join(conditions),
+        order_by=order_by,
+        limit_clause=limit_clause,
+    )
 
     try:
-        rows = cached_query(query_db, sql, params=params, ttl=300)
+        if ttl is None:
+            rows = query_db(sql, params)
+        else:
+            rows = cached_query(query_db, sql, params=params, ttl=ttl)
     except Exception:
         logger.exception(
-            "fetch_predictions failed (issues=%s, playtype_ids=%s, limit=%s)",
-            list(issues),
-            list(playtype_ids) if playtype_ids is not None else None,
+            "fetch_predictions failed (issues=%s, playtype_ids=%s, user_ids=%s, limit=%s)",
+            issue_values,
+            playtype_ids,
+            user_ids,
             limit,
         )
-        return pd.DataFrame(columns=["issue_name", "playtype_id", "user_id", "numbers"])
-    return pd.DataFrame(rows)
+        return pd.DataFrame(columns=select_columns)
+
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return pd.DataFrame(columns=select_columns)
+    return frame.reindex(columns=select_columns)

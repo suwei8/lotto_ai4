@@ -6,10 +6,11 @@ import pandas as pd
 import streamlit as st
 
 from db.connection import query_db
-from utils.cache import cached_query
 from utils.charts import render_digit_frequency_chart
 from utils.data_access import (
+    fetch_lottery_infos,
     fetch_playtypes_for_issue,
+    fetch_predictions,
 )
 from utils.numbers import match_prediction_hit, normalize_code, parse_tokens
 from utils.sql import make_in_clause
@@ -49,16 +50,14 @@ raw_playtypes = playtype_picker(
 )
 selected_playtypes = [int(pid) for pid in raw_playtypes]
 
-issue_rows = cached_query(
-    query_db,
+issue_rows = query_db(
     """
     SELECT DISTINCT issue_name
     FROM expert_predictions
     ORDER BY issue_name DESC
     LIMIT 500
     """,
-    params=None,
-    ttl=300,
+    {},
 )
 issue_list_all = [row["issue_name"] for row in issue_rows]
 if selected_issue not in issue_list_all:
@@ -171,7 +170,7 @@ if st.button("🚀 查询推荐数字频次"):
                 WHERE issue_name = :issue
                   AND {current_clause}
             """
-            current_rows = cached_query(query_db, sql_current, params=current_params, ttl=120)
+            current_rows = query_db(sql_current, current_params)
         except Exception as exc:  # pragma: no cover - defensive UI guard
             st.error(f"加载当前期推荐失败：{exc}")
             st.stop()
@@ -187,8 +186,7 @@ if st.button("🚀 查询推荐数字频次"):
             current_df.drop_duplicates(subset=["user_id", "playtype_id", "numbers"], inplace=True)
 
         try:
-            issue_rows = cached_query(
-                query_db,
+            issue_rows = query_db(
                 """
                 SELECT DISTINCT issue_name
                 FROM expert_predictions
@@ -196,8 +194,7 @@ if st.button("🚀 查询推荐数字频次"):
                 ORDER BY issue_name DESC
                 LIMIT :limit
                 """,
-                params={"ref_issue": ref_issue, "limit": lookback_n},
-                ttl=120,
+                {"ref_issue": ref_issue, "limit": lookback_n},
             )
         except Exception as exc:  # pragma: no cover - defensive UI guard
             st.error(f"加载回溯期号失败：{exc}")
@@ -208,37 +205,22 @@ if st.button("🚀 查询推荐数字频次"):
             st.info("所选回溯范围内无专家推荐记录。")
             st.stop()
 
-        result_clause, result_params = make_in_clause("issue_name", issue_list, "res")
-        sql_result = f"""
-            SELECT issue_name, open_code
-            FROM lottery_results
-            WHERE {result_clause}
-        """
-        result_rows = cached_query(query_db, sql_result, params=result_params, ttl=120)
+        lottery_map = fetch_lottery_infos(issue_list, ttl=None)
         result_map = {
-            row["issue_name"]: normalize_code(row.get("open_code")) for row in result_rows
+            issue: normalize_code((lottery_map.get(issue) or {}).get("open_code"))
+            for issue in issue_list
         }
 
         history_df = pd.DataFrame()
         if ref_playtypes:
-            history_clause, history_params = make_in_clause("issue_name", issue_list, "hist")
-            playtype_clause, playtype_params = make_in_clause(
-                "playtype_id", [int(pid) for pid in ref_playtypes], "pt"
+            history_df = fetch_predictions(
+                issue_list,
+                playtype_ids=ref_playtypes,
+                columns=["issue_name", "playtype_id", "user_id", "numbers"],
+                ttl=None,
             )
-            history_params.update(playtype_params)
-            sql_history = f"""
-                SELECT issue_name, playtype_id, user_id, numbers
-                FROM expert_predictions
-                WHERE {history_clause}
-                  AND {playtype_clause}
-            """
-            try:
-                history_rows = cached_query(query_db, sql_history, params=history_params, ttl=120)
-            except Exception as exc:  # pragma: no cover - defensive UI guard
-                st.error(f"加载回溯推荐失败：{exc}")
-                st.stop()
-            history_df = pd.DataFrame(history_rows)
-            history_df["playtype_id"] = history_df["playtype_id"].astype(int)
+            if not history_df.empty:
+                history_df["playtype_id"] = history_df["playtype_id"].astype(int)
 
         kept_users: set[str]
         if enable_filter and not history_df.empty:
@@ -339,7 +321,7 @@ if st.button("🚀 查询推荐数字频次"):
                 FROM expert_info
                 WHERE {user_clause}
             """
-            user_rows = cached_query(query_db, sql_users, params=user_params, ttl=300)
+            user_rows = query_db(sql_users, user_params)
             user_info_df = pd.DataFrame(user_rows)
 
             current_df["playtype_name"] = current_df["playtype_id"].apply(

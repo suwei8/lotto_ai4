@@ -111,11 +111,16 @@ def gather_hit_records(
     if not issue_sequence:
         return {}
 
-    predictions_df = fetch_predictions(issue_sequence, playtype_ids=[playtype_id])
+    predictions_df = fetch_predictions(
+        issue_sequence,
+        playtype_ids=[playtype_id],
+        columns=["issue_name", "user_id", "numbers"],
+        ttl=None,
+    )
     if predictions_df.empty:
         return {}
 
-    info_map = fetch_lottery_infos(issue_sequence)
+    info_map = fetch_lottery_infos(issue_sequence, ttl=None)
     records: dict[int, dict[str, bool]] = {}
 
     for (user_id, issue_name), group in predictions_df.groupby(["user_id", "issue_name"]):
@@ -445,20 +450,20 @@ st.markdown("---")
 st.markdown("## 🧾 查询推荐记录")
 
 if st.button("📥 执行筛选并查询推荐"):
-    issue_predictions = fetch_predictions([issue_name])
+    issue_predictions = fetch_predictions(
+        [issue_name],
+        playtype_ids=playtype_ids,
+        columns=["issue_name", "playtype_id", "user_id", "numbers"],
+        ttl=None,
+    )
     if issue_predictions.empty:
         clear_cached_result()
         st.info("当前期暂无推荐记录。")
     else:
         issue_predictions = issue_predictions.copy()
-        issue_predictions = issue_predictions[issue_predictions["issue_name"] == issue_name]
-        if issue_predictions.empty:
-            clear_cached_result()
-            st.info("当前期暂无推荐记录。")
-        else:
-            issue_predictions["playtype_id"] = issue_predictions["playtype_id"].astype(int)
-            issue_predictions["user_id"] = issue_predictions["user_id"].astype(int)
-            issue_predictions["digit_set"] = issue_predictions["numbers"].apply(extract_digit_set)
+        issue_predictions["playtype_id"] = issue_predictions["playtype_id"].astype(int)
+        issue_predictions["user_id"] = issue_predictions["user_id"].astype(int)
+        issue_predictions["digit_set"] = issue_predictions["numbers"].apply(extract_digit_set)
 
             number_conditions_payload: list[dict[str, object]] = []
             for cond in st.session_state["filter_conditions"]:

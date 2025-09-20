@@ -132,6 +132,12 @@
 ---
 
 ## 🚀 后续方向（建议）
-- 优化命中趋势、热力图等高交互页面的渲染性能，评估 `st.experimental_fragment`/服务端缓存。
-- 将 Ruff 旧版 `select/ignore` 配置迁移至 `lint.*`，并在 CI 中固定 linter 版本。
+- 在 CI（如 GitHub Actions）中固定 Ruff 版本，并执行 `ruff check --output-format=github`，确保与 `pyproject.toml` 的 `lint.*` 配置保持一致。
 - 继续完善 `docs/` 下的模块说明与使用案例，方便新成员快速上手。
+
+## ⚙️ 高交互页面性能优化路线
+1. **拆分与增量渲染**：对 `UserHitAnalysis`、`UserExpertFilterPlus`、`NumberHeatmap` 系列等高交互页面，拆分为子组件并使用 `st.experimental_fragment` 或模块化函数，减少重复渲染范围。
+2. **服务端缓存策略**：结合 `st.cache_data` 与自定义失效规则，为跨页面共享的慢查询（如 `fetch_playtypes_for_issue`、`fetch_lottery_infos`）设置统一缓存入口，可考虑引入 Redis 等外部缓存以提升并发能力。
+3. **异步/批量查询**：对于需要多次数据库命中的页面（如专家筛选器、热力图汇总），评估批量查询或并行化方案，减少 round-trip 数量。
+4. **前端交互优化**：限制默认选项数量（如期号、玩法多选控件默认展示 Top N），并在交互提示中引导用户逐步缩小筛选范围；同时考虑加入懒加载图表或分页型数据表。
+5. **监控与压测**：在预发环境利用 Streamlit 的性能诊断工具或自建指标（请求耗时、缓存命中率），定期回归以评估优化效果。

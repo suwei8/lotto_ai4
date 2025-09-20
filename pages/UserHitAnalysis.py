@@ -65,22 +65,29 @@ user_input = st.text_input("👤 输入专家 user_id")
 
 
 def _fetch_predictions(
-    issue_list: Sequence[str], playtype_ids: Sequence[int] | None = None
+    issue_list: Sequence[str],
+    *,
+    playtype_ids: Sequence[int] | None = None,
+    user_ids: Sequence[int] | None = None,
 ) -> pd.DataFrame:
     issue_tuple = tuple(issue_list)
-    return fetch_predictions(issue_tuple, playtype_ids=playtype_ids)
+    return fetch_predictions(
+        issue_tuple,
+        playtype_ids=playtype_ids,
+        user_ids=user_ids,
+        columns=["issue_name", "playtype_id", "user_id", "numbers"],
+        ttl=None,
+    )
 
 
 def _fetch_open_infos(issue_list: Sequence[str]) -> dict[str, dict[str, object]]:
-    return fetch_lottery_infos(tuple(issue_list))
+    return fetch_lottery_infos(tuple(issue_list), ttl=None)
 
 
 def _fetch_expert_name(user_id: int) -> str:
-    rows = cached_query(
-        query_db,
+    rows = query_db(
         "SELECT nick_name FROM expert_info WHERE user_id = :uid LIMIT 1",
-        params={"uid": user_id},
-        ttl=300,
+        {"uid": user_id},
     )
     if rows and rows[0].get("nick_name"):
         return rows[0]["nick_name"]
@@ -103,13 +110,17 @@ if st.button("🔍 批量查询专家多期命中"):
         st.warning("缺少历史期号用于分析。")
         st.stop()
 
-    predictions_df = _fetch_predictions(history_issues, playtype_ids=[int(selected_playtype_id)])
+    predictions_df = _fetch_predictions(
+        history_issues,
+        playtype_ids=[int(selected_playtype_id)],
+        user_ids=[user_id],
+    )
     if predictions_df.empty:
         st.info("所选范围内无预测记录。")
         st.stop()
 
     predictions_df["issue_name"] = predictions_df["issue_name"].astype(str)
-    user_records = predictions_df[predictions_df["user_id"] == user_id]
+    user_records = predictions_df
     if user_records.empty:
         st.info("该专家在所选期号内未给出推荐。")
         st.stop()
@@ -222,13 +233,13 @@ if st.button("📌 查询专家综合画像"):
         st.stop()
 
     history_tuple = tuple(history_issues)
-    predictions_df = _fetch_predictions(history_tuple)
+    predictions_df = _fetch_predictions(history_tuple, user_ids=[user_id])
     if predictions_df.empty:
         st.info("无历史推荐数据用于画像分析。")
         st.stop()
 
     predictions_df["issue_name"] = predictions_df["issue_name"].astype(str)
-    user_df = predictions_df[predictions_df["user_id"] == user_id]
+    user_df = predictions_df
     if user_df.empty:
         st.info("该专家没有符合条件的历史推荐。")
         st.stop()
