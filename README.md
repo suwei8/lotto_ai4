@@ -127,3 +127,26 @@ pyproject.toml         # black / ruff / pytest 统一配置
 - 将 Context7 项目注册到云端，借助 `context7` CLI 获取质量报告。
 
 > 所有 SQL 必须通过 `query_db` 调用，并确保使用参数化（`:param`）语法，以满足只读、可审计与性能要求。
+
+## 项目分析和工具文件
+
+项目包含多个分析报告和工具文件，用于数据库分析、代码质量评估和系统维护：
+
+### 数据库分析工具
+- `analyze_db.py` - 数据库连接和基础分析脚本
+- `detailed_analysis.py` - 详细的数据库结构和数据统计分析
+- `mysql_mcp_config.json` - MySQL MCP工具配置文件
+- `mysql_mcp_server.py` - MySQL MCP服务器实现
+- `mysql_mcp_cli.py` - MySQL MCP命令行工具接口
+- `mysql_mcp_usage.md` - MySQL MCP工具使用说明
+
+### 代码质量报告
+- `code_quality_report.md` - 代码质量分析报告
+- `code_quality_improvement_report.md` - 代码质量改进建议和结果
+- `project_architecture_analysis.md` - 项目架构分析报告
+- `cleanup_report.md` - 项目垃圾文件清理报告
+
+### 开发工具配置
+- `pyproject.toml` - Black、Ruff和Pytest的统一配置
+- `.gitignore` - Git忽略文件配置
+- `.env.example` - 环境变量配置示例
