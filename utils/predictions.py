@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import Counter, defaultdict
 from typing import Sequence
 
@@ -7,6 +8,8 @@ from db.connection import query_db
 from utils.cache import cached_query
 from utils.numbers import normalize_code, parse_tokens
 from utils.sql import make_in_clause
+
+logger = logging.getLogger(__name__)
 
 
 def build_prediction_distribution(
@@ -30,6 +33,9 @@ def build_prediction_distribution(
     try:
         rows = cached_query(query_db, sql, params=params, ttl=ttl)
     except Exception:
+        logger.exception(
+            "build_prediction_distribution failed (issue=%s, playtypes=%s)", issue, ids
+        )
         rows = []
     if not rows:
         return []

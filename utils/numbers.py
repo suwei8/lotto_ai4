@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable, List, Sequence, Tuple
+from typing import Iterable, Sequence
 
 TOKEN_PATTERN = re.compile(r"[\s,|;]+")
 
@@ -12,7 +12,7 @@ def normalize_code(code: str | None) -> str:
     return re.sub(r"[^0-9]", "", code)
 
 
-def parse_tokens(numbers: str | None) -> List[str]:
+def parse_tokens(numbers: str | None) -> list[str]:
     if not numbers:
         return []
     parts = [part.strip() for part in TOKEN_PATTERN.split(numbers) if part.strip()]
@@ -30,8 +30,8 @@ def count_hits(tokens: Iterable[str], open_code: str | None) -> int:
     return count
 
 
-def _flatten_digit_tokens(numbers: str) -> List[str]:
-    digits: List[str] = []
+def _flatten_digit_tokens(numbers: str) -> list[str]:
+    digits: list[str] = []
     for token in parse_tokens(numbers):
         normalized = normalize_code(token)
         if normalized:
@@ -77,7 +77,9 @@ def match_prediction_hit(playtype_name: str, numbers: str, open_code: str) -> bo
         return hit_count >= 1
     if "双胆" in playtype_name:
         return hit_count >= 2
-    if "三胆" in playtype_name or any(keyword in playtype_name for keyword in ["五码", "六码", "七码"]):
+    if "三胆" in playtype_name or any(
+        keyword in playtype_name for keyword in ["五码", "六码", "七码"]
+    ):
         if unique_open_count == 1:
             return open_digits[0] in digit_set
         if unique_open_count == 2:
@@ -100,13 +102,13 @@ def count_digit_hits(tokens: Iterable[str], open_code: str | None) -> int:
     return len(hit_digits)
 
 
-def token_to_digits(token: str) -> List[int]:
+def token_to_digits(token: str) -> list[int]:
     clean = normalize_code(token)
     return [int(ch) for ch in clean] if clean else []
 
 
-def aggregate_digits(tokens: Iterable[str]) -> List[int]:
-    digits: List[int] = []
+def aggregate_digits(tokens: Iterable[str]) -> list[int]:
+    digits: list[int] = []
     for token in tokens:
         digits.extend(token_to_digits(token))
     return digits
@@ -132,7 +134,7 @@ def has_consecutive_digits(digits: Sequence[int]) -> bool:
     return any(b - a == 1 for a, b in zip(ordered, ordered[1:]))
 
 
-def to_triplet(combo: Sequence[int]) -> Tuple[int, int, int]:
+def to_triplet(combo: Sequence[int]) -> tuple[int, int, int]:
     if len(combo) != 3:
         raise ValueError("Expected a three-digit sequence")
     return tuple(int(x) for x in combo)

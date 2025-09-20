@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+import logging
+from typing import Iterable, Sequence
 
 import pandas as pd
 
 from db.connection import query_db
 from utils.cache import cached_query
 
+logger = logging.getLogger(__name__)
 
-def fetch_recent_issues(limit: int = 200) -> List[str]:
+
+def fetch_recent_issues(limit: int = 200) -> list[str]:
     marker = ""
     try:
         latest = query_db("SELECT MAX(issue_name) AS max_issue FROM expert_predictions")
@@ -39,18 +42,19 @@ def fetch_recent_issues(limit: int = 200) -> List[str]:
             extra_key=marker,
         )
     except Exception:
+        logger.exception("fetch_recent_issues failed (limit=%s)", limit)
         return []
     return [row["issue_name"] for row in rows]
 
 
-def fetch_latest_issue() -> Optional[str]:
+def fetch_latest_issue() -> str | None:
     issues = fetch_recent_issues(limit=1)
     return issues[0] if issues else None
 
 
 def default_issue_window(
-    recent: Optional[List[str]] = None, window: int = 50
-) -> Tuple[Optional[str], Optional[str]]:
+    recent: list[str] | None = None, window: int = 50
+) -> tuple[str | None, str | None]:
     issues = recent if recent is not None else fetch_recent_issues(limit=max(window, 1))
     if not issues:
         return None, None
@@ -67,11 +71,12 @@ def fetch_playtypes() -> pd.DataFrame:
     try:
         rows = cached_query(query_db, sql, params=None, ttl=1800)
     except Exception:
+        logger.exception("fetch_playtypes failed")
         return pd.DataFrame(columns=["playtype_id", "playtype_name"])
     return pd.DataFrame(rows)
 
 
-def playtype_options() -> List[Tuple[str, str]]:
+def playtype_options() -> list[tuple[str, str]]:
     frame = fetch_playtypes()
     if frame.empty:
         return []
@@ -88,18 +93,19 @@ def fetch_issue_dataframe(limit: int = 200) -> pd.DataFrame:
     try:
         rows = cached_query(query_db, sql, params={"limit": int(limit)}, ttl=300)
     except Exception:
+        logger.exception("fetch_issue_dataframe failed (limit=%s)", limit)
         return pd.DataFrame(columns=["issue_name", "open_code", "open_time"])
     return pd.DataFrame(rows)
 
 
-def fetch_playtype_name_map() -> Dict[str, str]:
+def fetch_playtype_name_map() -> dict[str, str]:
     frame = fetch_playtypes()
     if frame.empty:
         return {}
     return {str(row.playtype_id): row.playtype_name for row in frame.itertuples()}
 
 
-def playtype_name_to_id_map() -> Dict[str, str]:
+def playtype_name_to_id_map() -> dict[str, str]:
     frame = fetch_playtypes()
     if frame.empty:
         return {}
@@ -116,6 +122,7 @@ def fetch_experts(limit: int = 500) -> pd.DataFrame:
     try:
         rows = cached_query(query_db, sql, params={"limit": int(limit)}, ttl=600)
     except Exception:
+        logger.exception("fetch_experts failed (limit=%s)", limit)
         return pd.DataFrame(columns=["user_id", "nick_name"])
     return pd.DataFrame(rows)
 
@@ -131,11 +138,12 @@ def fetch_playtypes_for_issue(issue: str) -> pd.DataFrame:
     try:
         rows = cached_query(query_db, sql, params={"issue": issue}, ttl=300)
     except Exception:
+        logger.exception("fetch_playtypes_for_issue failed (issue=%s)", issue)
         return pd.DataFrame(columns=["playtype_id", "playtype_name"])
     return pd.DataFrame(rows)
 
 
-def fetch_predicted_issues(limit: int = 200) -> List[str]:
+def fetch_predicted_issues(limit: int = 200) -> list[str]:
     sql = """
     SELECT DISTINCT issue_name
     FROM expert_predictions
@@ -145,11 +153,12 @@ def fetch_predicted_issues(limit: int = 200) -> List[str]:
     try:
         rows = cached_query(query_db, sql, params={"limit": int(limit)}, ttl=300)
     except Exception:
+        logger.exception("fetch_predicted_issues failed (limit=%s)", limit)
         return []
     return [row["issue_name"] for row in rows]
 
 
-def fetch_lottery_info(issue: str) -> Optional[Dict[str, object]]:
+def fetch_lottery_info(issue: str) -> dict[str, object] | None:
     sql = """
     SELECT issue_name, open_code, `sum`, span, odd_even_ratio, big_small_ratio, open_time
     FROM lottery_results
@@ -159,11 +168,12 @@ def fetch_lottery_info(issue: str) -> Optional[Dict[str, object]]:
     try:
         rows = cached_query(query_db, sql, params={"issue": issue}, ttl=120)
     except Exception:
+        logger.exception("fetch_lottery_info failed (issue=%s)", issue)
         return None
     return rows[0] if rows else None
 
 
-def fetch_lottery_infos(issues: Sequence[str]) -> Dict[str, Dict[str, object]]:
+def fetch_lottery_infos(issues: Sequence[str]) -> dict[str, dict[str, object]]:
     if not issues:
         return {}
     placeholders = ", ".join([":issue_" + str(idx) for idx in range(len(issues))])
@@ -176,31 +186,28 @@ def fetch_lottery_infos(issues: Sequence[str]) -> Dict[str, Dict[str, object]]:
     try:
         rows = cached_query(query_db, sql, params=params, ttl=120)
     except Exception:
+        logger.exception("fetch_lottery_infos failed (issues=%s)", list(issues))
         return {}
     return {row["issue_name"]: row for row in rows}
 
 
 def fetch_predictions(
     issues: Sequence[str],
-    playtype_ids: Optional[Iterable[int]] = None,
-    limit: Optional[int] = None,
+    playtype_ids: Iterable[int] | None = None,
+    limit: int | None = None,
 ) -> pd.DataFrame:
     if not issues:
         return pd.DataFrame(columns=["issue_name", "playtype_id", "user_id", "numbers"])
 
     issue_placeholders = ", ".join([":issue_" + str(idx) for idx in range(len(issues))])
-    params: Dict[str, object] = {
-        f"issue_{idx}": issue for idx, issue in enumerate(issues)
-    }
+    params: dict[str, object] = {f"issue_{idx}": issue for idx, issue in enumerate(issues)}
 
     conditions = [f"issue_name IN ({issue_placeholders})"]
 
     if playtype_ids is not None:
         playtype_ids = list(playtype_ids)
         if playtype_ids:
-            pt_placeholders = ", ".join(
-                [":pt_" + str(idx) for idx in range(len(playtype_ids))]
-            )
+            pt_placeholders = ", ".join([":pt_" + str(idx) for idx in range(len(playtype_ids))])
             conditions.append(f"playtype_id IN ({pt_placeholders})")
             params.update({f"pt_{idx}": pt for idx, pt in enumerate(playtype_ids)})
 
@@ -221,5 +228,11 @@ def fetch_predictions(
     try:
         rows = cached_query(query_db, sql, params=params, ttl=300)
     except Exception:
+        logger.exception(
+            "fetch_predictions failed (issues=%s, playtype_ids=%s, limit=%s)",
+            list(issues),
+            list(playtype_ids) if playtype_ids is not None else None,
+            limit,
+        )
         return pd.DataFrame(columns=["issue_name", "playtype_id", "user_id", "numbers"])
     return pd.DataFrame(rows)

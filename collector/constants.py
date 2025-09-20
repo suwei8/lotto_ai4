@@ -1,7 +1,14 @@
-PRIMARY_DOMAIN = "api.91bixin.com"
-SECONDARY_DOMAIN = "api.17chdd.com"
-ENDPOINT_PATH = "/jddods/recom/unct/public/handler"
-TOKEN = "eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiJqc2NwIiwiaXNzIjoiamRkLmNvbSJ9.eyJleHQiOnsiYnJhbmRDb2RlIjoic3pjYXBwIiwicGxhdGZvcm1Db2RlIjoiYW5kcm9pZCJ9LCJ1c2VySWQiOjE4ODM4MDExLCJ1c2VyVHlwZSI6MSwidXVpZCI6ImUyYzI0ZmI4LWIwZTgtMzkxNS04ZWQzLTE2MzkxZDhlYmU0YyJ9.7a37c4913e1940192f3249cf3b5f10f5.M2EyNWE3OGEtZGNhNy00YTk0LWI0MzQtNDg1MjgzOTcxNTg0"
-AES_KEY_HEX = "6433596d493142554f5345325332596d616c42565a55513d"
-AES_IV = b"0000000000000000"
-USER_AGENT = "okhttp/4.12.0"
+from config import settings
+
+_collector = settings.collector
+
+PRIMARY_DOMAIN = _collector.primary_domain
+SECONDARY_DOMAIN = _collector.secondary_domain
+ENDPOINT_PATH = _collector.endpoint_path
+TOKEN = _collector.token
+AES_KEY_HEX = _collector.aes_key_hex
+AES_IV = _collector.aes_iv.encode("utf-8")
+USER_AGENT = _collector.user_agent
+
+if len(AES_IV) != 16:  # pragma: no cover - configuration validation
+    raise ValueError("COLLECTOR_AES_IV 必须是 16 字节长度的字符串。当前配置无效。")

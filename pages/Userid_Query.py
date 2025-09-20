@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
-st.set_page_config(page_title="Lotto AI", layout="wide")
 
 from db.connection import query_db
 from utils.cache import cached_query
-from utils.ui import issue_picker, expert_picker, render_open_info
+from utils.ui import expert_picker, issue_picker, render_open_info
+
+st.set_page_config(page_title="Lotto AI", layout="wide")
 
 PLAYTYPE_ORDER = [
     "独胆",
@@ -84,4 +85,3 @@ if predictions:
     st.dataframe(df, width="stretch")
 else:
     st.info("未查询到该专家在该期的推荐记录。")
-

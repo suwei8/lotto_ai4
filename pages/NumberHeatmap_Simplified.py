@@ -1,18 +1,18 @@
 from __future__ import annotations
 
+from collections import Counter
+
 import altair as alt
 import pandas as pd
 import streamlit as st
-from collections import Counter
 
 from db.connection import query_db
 from utils.cache import cached_query
+from utils.charts import render_digit_frequency_chart
 from utils.data_access import fetch_lottery_info, fetch_playtypes_for_issue
-from utils.ui import issue_picker, playtype_picker, render_rank_position_calculator
 from utils.numbers import normalize_code, parse_tokens
 from utils.sql import make_in_clause
-from utils.charts import render_digit_frequency_chart
-
+from utils.ui import issue_picker, playtype_picker, render_rank_position_calculator
 
 st.set_page_config(page_title="推荐号码热力图（简版）", layout="wide")
 st.header("NumberHeatmap_Simplified - 推荐号码热力图（简版）")
@@ -51,9 +51,7 @@ if playtypes_df.empty:
     st.info("当前期号无推荐记录。")
     st.stop()
 
-playtype_map = {
-    int(row.playtype_id): row.playtype_name for row in playtypes_df.itertuples()
-}
+playtype_map = {int(row.playtype_id): row.playtype_name for row in playtypes_df.itertuples()}
 raw_playtypes = playtype_picker(
     "heatmap_playtypes",
     mode="multi",
@@ -111,7 +109,9 @@ for playtype_id in selected_playtypes:
         .reset_index(drop=True)
     )
     if open_digits:
-        freq_df["命中状态"] = freq_df["数字"].apply(lambda d: "命中" if d in open_digits else "未命中")
+        freq_df["命中状态"] = freq_df["数字"].apply(
+            lambda d: "命中" if d in open_digits else "未命中"
+        )
     else:
         freq_df["命中状态"] = "未开奖"
 
@@ -215,9 +215,6 @@ else:
                 st.bar_chart(result_df.set_index("排行榜位置"))
 
 render_rank_position_calculator(
-    [
-        (playtype_map.get(pid, str(pid)), digits)
-        for pid, digits in rank_pool.items()
-    ],
+    [(playtype_map.get(pid, str(pid)), digits) for pid, digits in rank_pool.items()],
     key="heatmap_rank",
 )

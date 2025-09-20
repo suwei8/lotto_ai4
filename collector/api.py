@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
-import os
+import logging
 import random
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Sequence
 
-import binascii
 import requests
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
@@ -23,6 +23,8 @@ from .constants import (
     USER_AGENT,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class CollectorAPIError(RuntimeError):
     """Raised when the upstream采集接口返回异常。"""
@@ -32,14 +34,14 @@ class CollectorAPIError(RuntimeError):
 class LeaderboardEntry:
     user_id: int
     nick_name: str
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
 
 
 @dataclass(slots=True)
 class LeaderboardResult:
     issue_name: str
     lottery_id: int
-    entries: List[LeaderboardEntry]
+    entries: list[LeaderboardEntry]
 
 
 @dataclass(slots=True)
@@ -53,7 +55,7 @@ class ExpertScheme:
 class DetailResult:
     issue_name: str
     lottery_id: int
-    schemes: List[ExpertScheme]
+    schemes: list[ExpertScheme]
 
 
 def _aes_encrypt(plaintext: str) -> str:
@@ -64,7 +66,7 @@ def _aes_encrypt(plaintext: str) -> str:
     return base64.b64encode(encrypted).decode("utf-8")
 
 
-def _request_header(action_code: str) -> Dict[str, Any]:
+def _request_header(action_code: str) -> dict[str, Any]:
     return {
         "action": action_code,
         "appVersion": "4.0.6",
@@ -86,27 +88,31 @@ def _request_header(action_code: str) -> Dict[str, Any]:
     }
 
 
-def _build_payload(action_code: str, body: Dict[str, Any]) -> str:
+def _build_payload(action_code: str, body: dict[str, Any]) -> str:
     body_json = json.dumps(body, separators=(",", ":"), ensure_ascii=False)
     header = _request_header(action_code)
-    wrapper = json.dumps({"body": body_json, "header": header}, separators=(",", ":"), ensure_ascii=False)
+    wrapper = json.dumps(
+        {"body": body_json, "header": header}, separators=(",", ":"), ensure_ascii=False
+    )
     return _aes_encrypt(wrapper)
 
 
-def _headers() -> Dict[str, str]:
+def _headers() -> dict[str, str]:
     return {"User-Agent": USER_AGENT}
 
 
 class _BaseClient:
     domains = (PRIMARY_DOMAIN, SECONDARY_DOMAIN)
 
-    def __init__(self, session: Optional[requests.Session] = None) -> None:
+    def __init__(self, session: requests.Session | None = None) -> None:
         self._session = session or requests.Session()
 
-    def _post_with_failover(self, payload: str, retries: int = 3, delay: float = 1.5) -> requests.Response:
+    def _post_with_failover(
+        self, payload: str, retries: int = 3, delay: float = 1.5
+    ) -> requests.Response:
         files = {"request": (None, payload)}
         headers = _headers()
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
         for domain in self.domains:
             url = f"https://{domain}{ENDPOINT_PATH}"
             for attempt in range(retries):
@@ -119,10 +125,18 @@ class _BaseClient:
                 except Exception as exc:  # noqa: BLE001 - keep diagnostics simple
                     last_error = exc
                     sleep_time = delay * (0.8 + random.random() * 0.4)
+                    logger.warning(
+                        "Collector request failed (domain=%s, attempt=%s/%s): %s",
+                        domain,
+                        attempt + 1,
+                        retries,
+                        exc,
+                    )
                     time.sleep(sleep_time)
             # 当前 domain 重试完毕，换备用域名
         if last_error is None:
             last_error = CollectorAPIError("未知错误导致请求失败")
+        logger.error("Collector API失败，所有域名尝试均告终", exc_info=last_error)
         raise last_error
 
 
@@ -153,7 +167,7 @@ class LeaderboardClient(_BaseClient):
         data_section = data.get("data") or {}
         issue_name = data_section.get("issueName") or ""
         lottery = int(data_section.get("lotteryId", lottery_id))
-        rank_list: Sequence[Dict[str, Any]] = data_section.get("rankList") or []
+        rank_list: Sequence[dict[str, Any]] = data_section.get("rankList") or []
         entries = [
             LeaderboardEntry(
                 user_id=int(item.get("userId")),
@@ -174,7 +188,7 @@ class DetailClient(_BaseClient):
         *,
         lottery_id: int,
         user_id: int,
-        issue_name: Optional[str] = None,
+        issue_name: str | None = None,
     ) -> DetailResult:
         body = {
             "issueName": issue_name or "",
@@ -190,8 +204,8 @@ class DetailClient(_BaseClient):
         data_section = data.get("data") or {}
         issue = data_section.get("issueName") or issue_name or ""
         lottery = int(data_section.get("lotteryId", lottery_id))
-        raw_list: Sequence[Dict[str, Any]] = data_section.get("schemeContentModelList") or []
-        schemes: List[ExpertScheme] = []
+        raw_list: Sequence[dict[str, Any]] = data_section.get("schemeContentModelList") or []
+        schemes: list[ExpertScheme] = []
         for item in raw_list:
             playtype_id = int(item.get("playtypeId", 0))
             playtype_name = item.get("playtypeName") or ""

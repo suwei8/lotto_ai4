@@ -1,7 +1,8 @@
 # pages/Xuanhao_3D_P3.py
 # 组选/直选号码生成器 + 盈利模拟
+from itertools import combinations, permutations, product
+
 import streamlit as st
-from itertools import combinations, product, permutations
 
 st.set_page_config("🎰 老苏组选/直选号码生成器", layout="wide")
 st.title("🎰 老苏组选/直选号码生成器 + 盈利模拟")
@@ -61,6 +62,7 @@ if mode == "直选":
     with col_f2:
         exclude_digits = st.multiselect("排除数字", list(range(10)), default=[])
 
+
 # ===== 生成函数 =====
 def generate_group6(include_digits, exclude):
     result = []
@@ -69,19 +71,23 @@ def generate_group6(include_digits, exclude):
         result += [tuple(sorted((a, b, d))) for a, b in combinations(pool, 2)]
     return sorted(set(result))
 
+
 def get_odd_even_ratio(digits):
     odd = sum(1 for d in digits if d % 2 == 1)
     even = 3 - odd
     return f"{odd}:{even}"
+
 
 def get_big_small_ratio(digits):
     big = sum(1 for d in digits if d >= 5)
     small = 3 - big
     return f"{big}:{small}"
 
+
 def has_consecutive(digits):
     digits = sorted(digits)
     return any(digits[i + 1] - digits[i] == 1 for i in range(2))
+
 
 def filter_advanced(numbers):
     result = []
@@ -104,6 +110,7 @@ def filter_advanced(numbers):
         result.append(code)
     return result
 
+
 def generate_group3(include_digits, exclude):
     result = []
     for d in include_digits:
@@ -113,8 +120,17 @@ def generate_group3(include_digits, exclude):
             result.append(tuple(sorted([x, x, d])))
     return sorted(set(result))
 
-def generate_zhixuan(bai, shi, ge, include_digits=None, exclude_digits=None,
-                      filter_group3=False, filter_baozi=False, filter_group6=False):
+
+def generate_zhixuan(
+    bai,
+    shi,
+    ge,
+    include_digits=None,
+    exclude_digits=None,
+    filter_group3=False,
+    filter_baozi=False,
+    filter_group6=False,
+):
     include_digits = include_digits or []
     exclude_digits = exclude_digits or []
     result = []
@@ -132,6 +148,7 @@ def generate_zhixuan(bai, shi, ge, include_digits=None, exclude_digits=None,
             continue
         result.append((b, s, g))
     return result
+
 
 # ===== 生成号码 =====
 numbers = []

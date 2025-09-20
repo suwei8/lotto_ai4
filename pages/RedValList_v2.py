@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
-st.set_page_config(page_title="Lotto AI", layout="wide")
 
 from db.connection import query_db
 from utils.cache import cached_query
-from utils.data_access import fetch_lottery_info
-from utils.ui import issue_picker, playtype_picker, render_open_info, render_rank_position_calculator
-from utils.numbers import parse_tokens
 from utils.sql import make_in_clause
+from utils.ui import (
+    issue_picker,
+    playtype_picker,
+    render_open_info,
+    render_rank_position_calculator,
+)
+
+st.set_page_config(page_title="Lotto AI", layout="wide")
 
 st.header("RedValList_v2 - 选号分布 (V2)")
 
@@ -49,17 +53,13 @@ sql_playtypes = """
     WHERE v2.issue_name = :issue
     ORDER BY v2.playtype_id
 """
-playtype_rows = cached_query(
-    query_db, sql_playtypes, params={"issue": selected_issue}, ttl=600
-)
+playtype_rows = cached_query(query_db, sql_playtypes, params={"issue": selected_issue}, ttl=600)
 if not playtype_rows:
     st.info("该期未找到玩法数据。")
     st.stop()
 
 playtype_df = pd.DataFrame(playtype_rows)
-playtype_map = {
-    str(row.playtype_id): row.playtype_name for row in playtype_df.itertuples()
-}
+playtype_map = {str(row.playtype_id): row.playtype_name for row in playtype_df.itertuples()}
 raw_playtypes = playtype_picker(
     "red_val_v2_playtypes",
     mode="multi",
@@ -73,9 +73,7 @@ if not selected_playtypes:
     st.warning("请选择至少一个玩法。")
     st.stop()
 
-clause, params = make_in_clause(
-    "playtype_id", [int(pid) for pid in selected_playtypes], "pt"
-)
+clause, params = make_in_clause("playtype_id", [int(pid) for pid in selected_playtypes], "pt")
 params.update({"issue": selected_issue})
 
 sql = f"""

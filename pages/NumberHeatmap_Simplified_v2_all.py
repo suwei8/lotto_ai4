@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections import Counter
+
 import altair as alt
 import pandas as pd
 import streamlit as st
-from collections import Counter
 
 from db.connection import query_db
 from utils.cache import cached_query
@@ -11,9 +12,8 @@ from utils.data_access import (
     fetch_lottery_infos,
     fetch_playtypes,
 )
-from utils.ui import issue_picker, playtype_picker
 from utils.numbers import normalize_code, parse_tokens
-
+from utils.ui import issue_picker, playtype_picker
 
 st.set_page_config(page_title="多期推荐数字热力图", layout="wide")
 st.header("NumberHeatmap_Simplified_v2_all - 多期推荐数字热力图")
@@ -32,9 +32,7 @@ if playtypes.empty:
     st.warning("玩法字典为空。")
     st.stop()
 
-playtype_map = {
-    int(row.playtype_id): row.playtype_name for row in playtypes.itertuples()
-}
+playtype_map = {int(row.playtype_id): row.playtype_name for row in playtypes.itertuples()}
 raw_playtype = playtype_picker(
     "heatmap_v2_playtype",
     mode="single",
@@ -85,8 +83,9 @@ for issue in selected_issues:
     open_digits = []
     if open_info:
         open_digits = list(normalize_code(open_info.get("open_code")))
+    open_set = set(open_digits)
     freq_df["命中状态"] = freq_df["数字"].apply(
-        lambda digit: "命中" if digit in open_digits else "未命中"
+        lambda digit, open_set=open_set: "命中" if digit in open_set else "未命中"
     )
 
     chart_df = freq_df.copy()
@@ -121,7 +120,9 @@ else:
         chunk = charts[idx : idx + 4]
         cols = st.columns(len(chunk))
         for col, (issue, _freq_df, chart) in zip(cols, chunk):
-            open_code = lottery_info_map.get(issue, {}).get("open_code") if lottery_info_map else None
+            open_code = (
+                lottery_info_map.get(issue, {}).get("open_code") if lottery_info_map else None
+            )
             title = f"{issue} 期"
             if open_code:
                 title += f"｜开奖号码：{open_code}"

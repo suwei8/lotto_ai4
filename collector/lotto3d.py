@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from collections import Counter
-from typing import Dict, Sequence
+from typing import Sequence
+
+from config.settings import configure_logging
+from utils.cache_control import bump_cache_token
 
 from .api import CollectorAPIError, DetailClient, LeaderboardClient
 from .config import DEFAULT_ISSUE_COUNT, DEFAULT_LIMIT, LOTTERY_ID, PLAYTYPE_SPECS
 from .storage import expand_scheme, upsert_expert_info, upsert_prediction
-from utils.cache_control import bump_cache_token
+
+logger = logging.getLogger(__name__)
 
 
 def collect_lotto3d(
@@ -19,7 +24,7 @@ def collect_lotto3d(
     leaderboard_client = LeaderboardClient()
     detail_client = DetailClient()
 
-    known_users: Dict[int, str] = {}
+    known_users: dict[int, str] = {}
     stats = Counter()
     issue_name: str | None = None
     lottery_id = LOTTERY_ID
@@ -36,7 +41,12 @@ def collect_lotto3d(
                     issue_count=issue_count,
                 )
             except CollectorAPIError as exc:
-                print(f"⚠️ 排行榜获取失败 playtype={spec.playtype_id} sort={sort_type}: {exc}")
+                logger.warning(
+                    "排行榜获取失败 playtype=%s sort=%s: %s",
+                    spec.playtype_id,
+                    sort_type,
+                    exc,
+                )
                 continue
 
             if result.issue_name:
@@ -53,11 +63,11 @@ def collect_lotto3d(
         raise RuntimeError("未从排行榜获取到任何专家数据")
 
     if not issue_name:
-        print("⚠️ 排行榜未返回期号，将在明细接口中获取 issue_name")
+        logger.warning("排行榜未返回期号，将在明细接口中获取 issue_name")
 
-    print(f"🏁 本次采集覆盖 {len(known_users)} 位专家，目标期号 {issue_name or '未知'}")
+    logger.info("🏁 本次采集覆盖 %s 位专家，目标期号 %s", len(known_users), issue_name or "未知")
 
-    for idx, (user_id, nick_name) in enumerate(known_users.items(), start=1):
+    for idx, (user_id, _nick_name) in enumerate(known_users.items(), start=1):
         try:
             detail = detail_client.fetch(
                 lottery_id=lottery_id,
@@ -65,12 +75,12 @@ def collect_lotto3d(
                 issue_name=issue_name,
             )
         except CollectorAPIError as exc:
-            print(f"⚠️ 明细获取失败 user={user_id}: {exc}")
+            logger.warning("明细获取失败 user=%s: %s", user_id, exc)
             continue
 
         resolved_issue = detail.issue_name or issue_name
         if not resolved_issue:
-            print(f"⚠️ 无法获取期号，跳过专家 {user_id}")
+            logger.warning("无法获取期号，跳过专家 %s", user_id)
             continue
         for scheme in detail.schemes:
             for expanded in expand_scheme(scheme.playtype_id, scheme.playtype_name, scheme.numbers):
@@ -83,20 +93,21 @@ def collect_lotto3d(
                 stats["predictions"] += 1
         stats["detail_calls"] += 1
         if idx % 20 == 0:
-            print(f"……已完成 {idx} 位专家采集")
+            logger.info("……已完成 %s 位专家采集", idx)
 
-    print(
-        "✅ 采集完成："
-        f"排行榜请求 {stats['leaderboard_calls']} 次，"
-        f"明细请求 {stats['detail_calls']} 次，"
-        f"写入方案 {stats['predictions']} 条"
+    logger.info(
+        "✅ 采集完成：排行榜请求 %s 次，明细请求 %s 次，写入方案 %s 条",
+        stats["leaderboard_calls"],
+        stats["detail_calls"],
+        stats["predictions"],
     )
 
     bump_cache_token()
-    print("🔄 已刷新前端缓存标记，Streamlit 将在下次请求时获取最新数据。")
+    logger.info("🔄 已刷新前端缓存标记，Streamlit 将在下次请求时获取最新数据。")
 
 
 def main() -> None:
+    configure_logging()
     parser = argparse.ArgumentParser(description="采集福彩3D专家预测数据")
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help="排行榜人数上限")
     parser.add_argument("--issue-count", type=int, default=DEFAULT_ISSUE_COUNT, help="参考期数")

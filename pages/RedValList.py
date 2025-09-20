@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-from collections import Counter
-
 import pandas as pd
 import streamlit as st
-st.set_page_config(page_title="Lotto AI", layout="wide")
 
 from db.connection import query_db
 from utils.cache import cached_query
-from utils.data_access import fetch_lottery_info, fetch_playtypes_for_issue
+from utils.data_access import fetch_playtypes_for_issue
 from utils.predictions import build_prediction_distribution
-from utils.ui import issue_picker, playtype_picker, render_rank_position_calculator
-from utils.numbers import parse_tokens
 from utils.sql import make_in_clause
+from utils.ui import issue_picker, playtype_picker, render_rank_position_calculator
 
+st.set_page_config(page_title="Lotto AI", layout="wide")
 
 st.header("RedValList - 选号分布")
 
@@ -31,9 +28,7 @@ if playtypes_df.empty:
     st.info("当前期号下无推荐数据。")
     st.stop()
 
-playtype_map = {
-    int(row.playtype_id): row.playtype_name for row in playtypes_df.itertuples()
-}
+playtype_map = {int(row.playtype_id): row.playtype_name for row in playtypes_df.itertuples()}
 playtype_ids = [str(pid) for pid in playtype_map.keys()]
 raw_selection = playtype_picker(
     "red_val_playtype",
@@ -92,4 +87,3 @@ else:
             rank_entries.append((row["玩法"], digits))
 
     render_rank_position_calculator(rank_entries, key="red_val_rank")
-

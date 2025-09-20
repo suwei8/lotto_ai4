@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import Iterable, List, Optional, Sequence, Tuple, Union, Mapping
+import logging
 from collections import Counter
+from typing import Iterable, Mapping, Sequence
 
 import pandas as pd
 import streamlit as st
@@ -10,13 +11,15 @@ from db.connection import query_db
 from utils.cache import cached_query
 from utils.data_access import (
     default_issue_window,
+    fetch_experts,
     fetch_issue_dataframe,
+    fetch_lottery_info,
     fetch_playtypes,
     fetch_predicted_issues,
     fetch_recent_issues,
-    fetch_experts,
-    fetch_lottery_info,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def issue_picker(
@@ -24,11 +27,11 @@ def issue_picker(
     *,
     mode: str = "single",
     source: str = "lottery",
-    default: Union[str, Sequence[str], None] = None,
-    label: Optional[str] = None,
+    default: str | Sequence[str] | None = None,
+    label: str | None = None,
     max_issues: int = 200,
-    options: Optional[Sequence[str]] = None,
-) -> Union[Optional[str], List[str]]:
+    options: Sequence[str] | None = None,
+) -> str | None | list[str]:
     """Unified issue selector supporting single or multi-select modes.
 
     Args:
@@ -71,7 +74,11 @@ def issue_picker(
         if default is None or default == "all":
             default_values = issues
         else:
-            default_values = [val for val in default if val in issues] if isinstance(default, (list, tuple, set)) else [default]
+            default_values = (
+                [val for val in default if val in issues]
+                if isinstance(default, (list, tuple, set))
+                else [default]
+            )
         return st.multiselect(
             label,
             options=issues,
@@ -79,7 +86,7 @@ def issue_picker(
             key=f"{key}_issues",
         )
 
-    default_value: Optional[str]
+    default_value: str | None
     if isinstance(default, str) and default in issues:
         default_value = default
     elif default and isinstance(default, (list, tuple)):
@@ -101,7 +108,7 @@ def issue_range_selector(
     *,
     source: str = "lottery",
     max_issues: int = 200,
-) -> Tuple[Optional[str], Optional[str], List[str]]:
+) -> tuple[str | None, str | None, list[str]]:
     """Render a configurable issue range selector.
 
     Returns the start issue, end issue, and the list of known issues (newest first).
@@ -130,8 +137,8 @@ def issue_range_selector(
         key=f"{key_prefix}_issue_mode",
     )
 
-    start_issue: Optional[str]
-    end_issue: Optional[str]
+    start_issue: str | None
+    end_issue: str | None
 
     if mode == "近N期":
         default_value = default_window if default_window in limits else limits[-1]
@@ -145,15 +152,11 @@ def issue_range_selector(
     else:
         all_options = [""] + issues
         try:
-            end_index = (
-                all_options.index(latest_end) if latest_end in all_options else 0
-            )
+            end_index = all_options.index(latest_end) if latest_end in all_options else 0
         except ValueError:
             end_index = 0
         try:
-            start_index = (
-                all_options.index(latest_start) if latest_start in all_options else 0
-            )
+            start_index = all_options.index(latest_start) if latest_start in all_options else 0
         except ValueError:
             start_index = 0
         end_issue = (
@@ -181,12 +184,12 @@ def playtype_picker(
     key: str,
     *,
     mode: str = "multi",
-    label: Optional[str] = None,
-    default: Union[str, Sequence[str], None] = None,
-    include: Optional[Sequence[Union[str, int]]] = None,
-    exclude: Optional[Sequence[Union[str, int]]] = None,
-    group_labels: Optional[Mapping[str, str]] = None,
-) -> Union[List[str], Optional[str]]:
+    label: str | None = None,
+    default: str | Sequence[str] | None = None,
+    include: Sequence[str | int] | None = None,
+    exclude: Sequence[str | int] | None = None,
+    group_labels: Mapping[str, str] | None = None,
+) -> list[str] | str | None:
     playtypes = fetch_playtypes()
     if playtypes.empty:
         st.warning("玩法列表为空，无法筛选玩法。")
@@ -223,7 +226,11 @@ def playtype_picker(
         if default is None or default == "all":
             default_values = options
         else:
-            default_values = [val for val in default if str(val) in options] if isinstance(default, (list, tuple, set)) else [str(default)]
+            default_values = (
+                [val for val in default if str(val) in options]
+                if isinstance(default, (list, tuple, set))
+                else [str(default)]
+            )
         return st.multiselect(
             label,
             options=options,
@@ -232,7 +239,7 @@ def playtype_picker(
             key=f"{key}_playtypes",
         )
 
-    default_value: Optional[str]
+    default_value: str | None
     if isinstance(default, str) and default in options:
         default_value = default
     elif default and isinstance(default, (list, tuple)):
@@ -248,7 +255,7 @@ def playtype_picker(
     )
 
 
-def playtype_multiselect(key_prefix: str, label: str = "玩法选择") -> List[str]:
+def playtype_multiselect(key_prefix: str, label: str = "玩法选择") -> list[str]:
     selection = playtype_picker(
         key=key_prefix,
         mode="multi",
@@ -258,7 +265,7 @@ def playtype_multiselect(key_prefix: str, label: str = "玩法选择") -> List[s
     return list(selection)
 
 
-def playtype_select(key_prefix: str, label: str = "玩法") -> Optional[str]:
+def playtype_select(key_prefix: str, label: str = "玩法") -> str | None:
     return playtype_picker(
         key=key_prefix,
         mode="single",
@@ -267,12 +274,12 @@ def playtype_select(key_prefix: str, label: str = "玩法") -> Optional[str]:
 
 
 def render_open_info(
-    issue: Optional[str],
+    issue: str | None,
     *,
     key: str,
     show_metrics: bool = True,
     caption: bool = True,
-) -> Optional[dict]:
+) -> dict | None:
     if not issue:
         st.info("未选择期号，无法展示开奖信息。")
         return None
@@ -291,25 +298,27 @@ def render_open_info(
         cols[1].metric("和值", sum_value)
         cols[2].metric("跨度", span_value)
     if caption:
-        st.caption(
-            f"开奖号码：{open_code}丨和值：{sum_value}丨跨度：{span_value}"
-        )
+        st.caption(f"开奖号码：{open_code}丨和值：{sum_value}丨跨度：{span_value}")
     return info
 
 
 def expert_picker(
     key: str,
     *,
-    issue: Optional[str] = None,
+    issue: str | None = None,
     allow_manual: bool = True,
     label: str = "选择专家 user_id",
-    manual_label: Optional[str] = None,
+    manual_label: str | None = None,
     limit: int = 500,
-) -> tuple[Optional[str], dict[str, str]]:
+) -> tuple[str | None, dict[str, str]]:
     experts = fetch_experts(limit=limit)
-    expert_map = {str(row.user_id): row.nick_name or "" for row in experts.itertuples()} if not experts.empty else {}
+    expert_map = (
+        {str(row.user_id): row.nick_name or "" for row in experts.itertuples()}
+        if not experts.empty
+        else {}
+    )
 
-    issue_user_ids: List[str] = []
+    issue_user_ids: list[str] = []
     if issue:
         try:
             result = cached_query(
@@ -324,11 +333,14 @@ def expert_picker(
                 ttl=120,
             )
         except Exception:
+            logger.exception("获取期号 %s 的专家列表失败", issue)
             result = []
-        issue_user_ids = [str(row.get("user_id")) for row in result if row.get("user_id") is not None]
+        issue_user_ids = [
+            str(row.get("user_id")) for row in result if row.get("user_id") is not None
+        ]
 
     options = issue_user_ids or sorted(expert_map.keys())
-    selection: Optional[str] = None
+    selection: str | None = None
     if options:
         selection = st.selectbox(
             label,
@@ -354,7 +366,7 @@ def expert_picker(
 
 
 def render_rank_position_calculator(
-    entries: List[tuple[str, List[str]]],
+    entries: list[tuple[str, list[str]]],
     *,
     key: str,
     max_position: int = 10,
@@ -366,9 +378,7 @@ def render_rank_position_calculator(
             st.info("暂无数据可供计算。")
             return
         available_playtypes = sorted({name for name, _ in entries})
-        default_playtypes = [
-            name for name in available_playtypes if not name.startswith("杀")
-        ]
+        default_playtypes = [name for name in available_playtypes if not name.startswith("杀")]
         selected_playtypes = st.multiselect(
             "选择玩法",
             options=available_playtypes,
@@ -403,7 +413,7 @@ def render_rank_position_calculator(
 
 def dataframe_with_pagination(
     df: pd.DataFrame, page_size: int, key_prefix: str
-) -> Tuple[pd.DataFrame, int, int]:
+) -> tuple[pd.DataFrame, int, int]:
     from utils.pagination import paginate
 
     subset, page, pages = paginate(df, page_size=page_size, key=f"{key_prefix}_pager")
@@ -415,12 +425,10 @@ def download_csv_button(df: pd.DataFrame, label: str, key: str) -> None:
     if df.empty:
         return
     csv_data = df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label=label, data=csv_data, file_name=f"{key}.csv", mime="text/csv"
-    )
+    st.download_button(label=label, data=csv_data, file_name=f"{key}.csv", mime="text/csv")
 
 
-def display_issue_summary(start_issue: Optional[str], end_issue: Optional[str]) -> None:
+def display_issue_summary(start_issue: str | None, end_issue: str | None) -> None:
     if start_issue and end_issue:
         st.info(f"当前统计范围：{start_issue} 至 {end_issue}")
     elif end_issue:
@@ -440,10 +448,10 @@ def render_issue_table(limit: int = 50) -> None:
 def multi_select_from_dataframe(
     df: pd.DataFrame,
     value_column: str,
-    label_column: Optional[str] = None,
-    default: Optional[Iterable[str]] = None,
+    label_column: str | None = None,
+    default: Iterable[str] | None = None,
     key: str = "multi_select",
-) -> List[str]:
+) -> list[str]:
     if df.empty or value_column not in df:
         return []
     options = df[value_column].astype(str).tolist()
@@ -467,7 +475,7 @@ def issue_multiselect(
     label: str = "选择期号",
     max_default: int = 10,
     source: str = "lottery",
-) -> List[str]:
+) -> list[str]:
     if source == "predictions":
         issues = fetch_predicted_issues(limit=200)
     else:

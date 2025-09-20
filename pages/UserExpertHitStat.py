@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Iterable, Sequence
 
 import altair as alt
 import pandas as pd
@@ -10,21 +10,20 @@ import streamlit as st
 
 from db.connection import query_db
 from utils.cache import cached_query
+from utils.charts import render_digit_frequency_chart
 from utils.data_access import (
     fetch_lottery_info,
     fetch_playtypes,
 )
 from utils.numbers import match_prediction_hit, normalize_code, parse_tokens
-from utils.charts import render_digit_frequency_chart
 from utils.sql import make_in_clause
-
 
 st.set_page_config(page_title="AI 命中统计分析", layout="wide")
 st.header("UserExpertHitStat - AI 命中表现分析")
 st.caption("固定彩种：福彩3D")
 
 # --------- 常量与辅助配置 ---------
-POSITIONAL_PLAYTYPES: Dict[str, int] = {
+POSITIONAL_PLAYTYPES: dict[str, int] = {
     "百位定3": 0,
     "十位定3": 1,
     "个位定3": 2,
@@ -62,12 +61,12 @@ POSITIONAL_PLAYTYPES: Dict[str, int] = {
 }
 
 PLAYTYPE_DICT = fetch_playtypes()
-PLAYTYPE_NAME_TO_ID: Dict[str, int] = (
+PLAYTYPE_NAME_TO_ID: dict[str, int] = (
     {row.playtype_name: int(row.playtype_id) for row in PLAYTYPE_DICT.itertuples()}
     if not PLAYTYPE_DICT.empty
     else {}
 )
-PLAYTYPE_ID_TO_NAME: Dict[int, str] = (
+PLAYTYPE_ID_TO_NAME: dict[int, str] = (
     {int(row.playtype_id): row.playtype_name for row in PLAYTYPE_DICT.itertuples()}
     if not PLAYTYPE_DICT.empty
     else {}
@@ -76,7 +75,8 @@ PLAYTYPE_ID_TO_NAME: Dict[int, str] = (
 
 # --------- 数据查询辅助函数 ---------
 
-def fetch_stat_issues() -> List[str]:
+
+def fetch_stat_issues() -> list[str]:
     rows = cached_query(
         query_db,
         "SELECT DISTINCT issue_name FROM expert_hit_stat ORDER BY issue_name DESC",
@@ -86,7 +86,7 @@ def fetch_stat_issues() -> List[str]:
     return [str(row["issue_name"]) for row in rows]
 
 
-def fetch_playtypes_for_issue(issue: str) -> List[Tuple[int, str]]:
+def fetch_playtypes_for_issue(issue: str) -> list[tuple[int, str]]:
     rows = cached_query(
         query_db,
         """
@@ -100,7 +100,10 @@ def fetch_playtypes_for_issue(issue: str) -> List[Tuple[int, str]]:
         ttl=120,
     )
     return [
-        (int(row["pid"]), row.get("pname") or PLAYTYPE_ID_TO_NAME.get(int(row["pid"]), str(row["pid"])))
+        (
+            int(row["pid"]),
+            row.get("pname") or PLAYTYPE_ID_TO_NAME.get(int(row["pid"]), str(row["pid"])),
+        )
         for row in rows
     ]
 
@@ -123,7 +126,7 @@ def fetch_hit_summary(issues: Sequence[str], playtype_id: int) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def fetch_nick_map(user_ids: Iterable[int]) -> Dict[int, str]:
+def fetch_nick_map(user_ids: Iterable[int]) -> dict[int, str]:
     ids = list(user_ids)
     if not ids:
         return {}
@@ -133,7 +136,7 @@ def fetch_nick_map(user_ids: Iterable[int]) -> Dict[int, str]:
     return {int(row["user_id"]): row.get("nick_name") or "未知" for row in rows}
 
 
-def fetch_query_issues() -> List[str]:
+def fetch_query_issues() -> list[str]:
     sql = """
         SELECT issue_name
         FROM (
@@ -147,7 +150,7 @@ def fetch_query_issues() -> List[str]:
     return [str(row["issue_name"]) for row in rows]
 
 
-def fetch_last_hit_status(issue: str, playtype_id: int) -> Tuple[set[int], set[int]]:
+def fetch_last_hit_status(issue: str, playtype_id: int) -> tuple[set[int], set[int]]:
     rows = cached_query(
         query_db,
         """
@@ -163,7 +166,9 @@ def fetch_last_hit_status(issue: str, playtype_id: int) -> Tuple[set[int], set[i
     return hit_users, miss_users
 
 
-def fetch_predictions_for_users(issue: str, playtype_id: int, user_ids: Sequence[int]) -> pd.DataFrame:
+def fetch_predictions_for_users(
+    issue: str, playtype_id: int, user_ids: Sequence[int]
+) -> pd.DataFrame:
     ids = list(user_ids)
     if not ids:
         return pd.DataFrame(columns=["user_id", "numbers"])
@@ -223,9 +228,7 @@ if st.button("📊 分析 AI 命中表现"):
         summary_df["命中期数"] = summary_df["hit_count"].fillna(0).astype(int)
         summary_df["命中数字数量"] = summary_df["hit_number_count"].fillna(0).astype(int)
         summary_df["命中率"] = summary_df.apply(
-            lambda row: round(row["命中数字数量"] / row["预测期数"], 4)
-            if row["预测期数"]
-            else 0,
+            lambda row: round(row["命中数字数量"] / row["预测期数"], 4) if row["预测期数"] else 0,
             axis=1,
         )
         summary_df["AI昵称"] = summary_df["user_id"].map(nick_map).fillna("未知")
@@ -245,7 +248,7 @@ if "uehs_summary" not in st.session_state:
 
 state = st.session_state["uehs_summary"]
 result_df: pd.DataFrame = state["result"]
-history_issues: List[str] = state["issues"]
+history_issues: list[str] = state["issues"]
 selected_playtype_id: int = state["playtype_id"]
 selected_playtype_name: str = state.get(
     "playtype_name", PLAYTYPE_ID_TO_NAME.get(selected_playtype_id, str(selected_playtype_id))
@@ -269,9 +272,7 @@ hit_lines = [
 columns = [[], [], [], []]
 for idx, line in enumerate(hit_lines):
     columns[idx % 4].append(line)
-block = "".join(
-    f"<div style='flex:1'>{'<br>'.join(col)}</div>" for col in columns if col
-)
+block = "".join(f"<div style='flex:1'>{'<br>'.join(col)}</div>" for col in columns if col)
 st.markdown("**命中期数分布统计：**", unsafe_allow_html=True)
 st.markdown(f"<div style='display:flex;gap:24px'>{block}</div>", unsafe_allow_html=True)
 
@@ -284,9 +285,7 @@ num_lines = [
 columns2 = [[], [], [], []]
 for idx, line in enumerate(num_lines):
     columns2[idx % 4].append(line)
-block2 = "".join(
-    f"<div style='flex:1'>{'<br>'.join(col)}</div>" for col in columns2 if col
-)
+block2 = "".join(f"<div style='flex:1'>{'<br>'.join(col)}</div>" for col in columns2 if col)
 st.markdown("**命中数字数量分布统计：**", unsafe_allow_html=True)
 st.markdown(f"<div style='display:flex;gap:24px'>{block2}</div>", unsafe_allow_html=True)
 
@@ -325,12 +324,18 @@ query_issue = st.selectbox("📅 查询期号", options=query_issue_options)
 
 query_playtype_ids = [pid for pid, _ in playtype_pairs]
 query_playtype_name_map = {pid: name for pid, name in playtype_pairs}
-default_index = query_playtype_ids.index(selected_playtype_id) if selected_playtype_id in query_playtype_ids else 0
+default_index = (
+    query_playtype_ids.index(selected_playtype_id)
+    if selected_playtype_id in query_playtype_ids
+    else 0
+)
 query_playtype_id = st.selectbox(
     "🎮 查询玩法",
     options=query_playtype_ids,
     index=default_index,
-    format_func=lambda pid: query_playtype_name_map.get(pid, PLAYTYPE_ID_TO_NAME.get(pid, str(pid))),
+    format_func=lambda pid: query_playtype_name_map.get(
+        pid, PLAYTYPE_ID_TO_NAME.get(pid, str(pid))
+    ),
 )
 query_playtype_name = query_playtype_name_map.get(
     query_playtype_id, PLAYTYPE_ID_TO_NAME.get(query_playtype_id, str(query_playtype_id))
@@ -352,11 +357,17 @@ if st.button("📥 查询推荐记录"):
                 issue_idx = query_issue_options.index(query_issue)
             except ValueError:
                 issue_idx = -1
-            last_issue = query_issue_options[issue_idx + 1] if issue_idx >= 0 and issue_idx + 1 < len(query_issue_options) else None
+            last_issue = (
+                query_issue_options[issue_idx + 1]
+                if issue_idx >= 0 and issue_idx + 1 < len(query_issue_options)
+                else None
+            )
             hit_users_last: set[int] = set()
             miss_users_last: set[int] = set()
             if last_issue:
-                hit_users_last, miss_users_last = fetch_last_hit_status(last_issue, query_playtype_id)
+                hit_users_last, miss_users_last = fetch_last_hit_status(
+                    last_issue, query_playtype_id
+                )
             if hit_status_filter == "上期命中":
                 filtered = filtered[filtered["user_id"].isin(hit_users_last)]
             else:
@@ -385,7 +396,7 @@ if "uehs_records" in st.session_state:
         "playtype_name",
         PLAYTYPE_ID_TO_NAME.get(playtype_id_for_display, str(playtype_id_for_display)),
     )
-    nick_map: Dict[int, str] = record_state.get("nick_map", {})
+    nick_map: dict[int, str] = record_state.get("nick_map", {})
 
     if rec_df.empty:
         st.info("筛选条件下未找到推荐记录。")
@@ -456,7 +467,7 @@ if "uehs_records" in st.session_state:
         else:
             st.info("暂无推荐数字统计数据。")
 
-        detail_rows: List[Dict[str, object]] = []
+        detail_rows: list[dict[str, object]] = []
         normalized_open_digits = set(list(normalize_code(open_code))) if open_code else set()
         if blue_code:
             normalized_open_digits.update(list(normalize_code(str(blue_code))))

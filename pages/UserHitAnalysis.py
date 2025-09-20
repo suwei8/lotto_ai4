@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from typing import Sequence
+
 import altair as alt
 import pandas as pd
 import streamlit as st
-from typing import Dict, List, Sequence
 
 from db.connection import query_db
 from utils.cache import cached_query
@@ -13,16 +14,15 @@ from utils.data_access import (
     fetch_playtypes_for_issue,
     fetch_predictions,
 )
-from utils.ui import issue_picker, playtype_picker, render_open_info
 from utils.numbers import match_prediction_hit, normalize_code, parse_tokens
-
+from utils.ui import issue_picker, playtype_picker, render_open_info
 
 st.set_page_config(page_title="专家多期命中分析", layout="wide")
 st.header("UserHitAnalysis - 专家多期命中分析")
 
 # 预加载玩法字典供跨期画像展示使用
 _all_playtypes_df = fetch_playtypes()
-PLAYTYPE_NAME_MAP: Dict[int, str] = (
+PLAYTYPE_NAME_MAP: dict[int, str] = (
     {int(row.playtype_id): row.playtype_name for row in _all_playtypes_df.itertuples()}
     if not _all_playtypes_df.empty
     else {}
@@ -45,9 +45,7 @@ if playtypes_df.empty:
     st.info("当前期号下无推荐数据。")
     st.stop()
 
-issue_playtype_map = {
-    int(row.playtype_id): row.playtype_name for row in playtypes_df.itertuples()
-}
+issue_playtype_map = {int(row.playtype_id): row.playtype_name for row in playtypes_df.itertuples()}
 playtype_options = list(issue_playtype_map.keys())
 
 selected_playtype_id = playtype_picker(
@@ -73,7 +71,7 @@ def _fetch_predictions(
     return fetch_predictions(issue_tuple, playtype_ids=playtype_ids)
 
 
-def _fetch_open_infos(issue_list: Sequence[str]) -> Dict[str, Dict[str, object]]:
+def _fetch_open_infos(issue_list: Sequence[str]) -> dict[str, dict[str, object]]:
     return fetch_lottery_infos(tuple(issue_list))
 
 
@@ -100,14 +98,12 @@ if st.button("🔍 批量查询专家多期命中"):
         st.error("user_id 必须是数字。")
         st.stop()
 
-    history_issues: List[str] = list(dict.fromkeys(selected_issues))
+    history_issues: list[str] = list(dict.fromkeys(selected_issues))
     if not history_issues:
         st.warning("缺少历史期号用于分析。")
         st.stop()
 
-    predictions_df = _fetch_predictions(
-        history_issues, playtype_ids=[int(selected_playtype_id)]
-    )
+    predictions_df = _fetch_predictions(history_issues, playtype_ids=[int(selected_playtype_id)])
     if predictions_df.empty:
         st.info("所选范围内无预测记录。")
         st.stop()
@@ -125,10 +121,7 @@ if st.button("🔍 批量查询专家多期命中"):
     )
 
     info_map = _fetch_open_infos(history_issues)
-    grouped = {
-        issue: frame
-        for issue, frame in user_records.groupby("issue_name", sort=False)
-    }
+    grouped = {issue: frame for issue, frame in user_records.groupby("issue_name", sort=False)}
 
     result_rows = []
     for issue in history_issues:
@@ -245,13 +238,11 @@ if st.button("📌 查询专家综合画像"):
     summary_records = []
     for inner_playtype_id, sub_df in user_df.groupby("playtype_id"):
         inner_playtype_id = int(inner_playtype_id)
-        inner_playtype_name = PLAYTYPE_NAME_MAP.get(
-            inner_playtype_id, str(inner_playtype_id)
-        )
+        inner_playtype_name = PLAYTYPE_NAME_MAP.get(inner_playtype_id, str(inner_playtype_id))
         total = len(sub_df)
         hit_count = 0
         hit_digits_sum = 0
-        hit_issue_indices: List[int] = []
+        hit_issue_indices: list[int] = []
 
         for row in sub_df.itertuples():
             issue_name = str(row.issue_name)
@@ -268,9 +259,7 @@ if st.button("📌 查询专家综合画像"):
 
         if hit_count > 1 and hit_issue_indices:
             hit_issue_indices.sort()
-            computed_gaps = [
-                j - i for i, j in zip(hit_issue_indices[:-1], hit_issue_indices[1:])
-            ]
+            computed_gaps = [j - i for i, j in zip(hit_issue_indices[:-1], hit_issue_indices[1:])]
             if computed_gaps:
                 avg_gap = round(sum(computed_gaps) / len(computed_gaps), 1)
             else:
@@ -293,12 +282,8 @@ if st.button("📌 查询专家综合画像"):
     if not summary_records:
         st.info("未能生成专家画像。")
     else:
-        stats_df = pd.DataFrame(summary_records).sort_values(
-            "命中期数", ascending=False
-        )
-        st.markdown(
-            f"### 🎯 专家综合画像（user_id: {user_id}，昵称：{nick_name}）"
-        )
+        stats_df = pd.DataFrame(summary_records).sort_values("命中期数", ascending=False)
+        st.markdown(f"### 🎯 专家综合画像（user_id: {user_id}，昵称：{nick_name}）")
         st.dataframe(stats_df, hide_index=True, use_container_width=True)
 
         chart = (

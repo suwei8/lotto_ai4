@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from collections.abc import Iterable, Sequence
 
 import altair as alt
 import pandas as pd
@@ -11,11 +11,11 @@ def render_digit_frequency_chart(
     *,
     digit_column: str = "数字",
     count_column: str = "被推荐次数",
-    hit_digits: Optional[Iterable[str]] = None,
-    height: Optional[int] = None,
-    width: Optional[int] = None,
-    tooltip_columns: Optional[Sequence[str]] = None,
-) -> Optional[alt.Chart]:
+    hit_digits: Iterable[str] | None = None,
+    height: int | None = None,
+    width: int | None = None,
+    tooltip_columns: Sequence[str] | None = None,
+) -> alt.Chart | None:
     if freq_df is None or freq_df.empty:
         return None
     chart_df = freq_df.copy()

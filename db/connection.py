@@ -1,20 +1,25 @@
 from __future__ import annotations
 
-from typing import Optional, Dict, Any
+import logging
+from typing import Any
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import QueuePool
 
-DB_URL = "mysql+pymysql://root:sw63828@127.0.0.1:3306/lotto_3d?charset=utf8mb4"
+from config import settings
+
+logger = logging.getLogger(__name__)
 
 _engine = create_engine(
-    DB_URL,
+    settings.database.url,
     poolclass=QueuePool,
-    pool_size=5,
-    max_overflow=10,
+    pool_size=settings.database.pool_size,
+    max_overflow=settings.database.max_overflow,
     pool_pre_ping=True,
-    pool_recycle=1800,
+    pool_recycle=settings.database.pool_recycle,
     future=True,
+    connect_args={"connect_timeout": settings.database.connect_timeout},
 )
 
 
@@ -23,10 +28,16 @@ def get_engine():
     return _engine
 
 
-def query_db(sql: str, params: Optional[Dict[str, Any]] = None):
+def query_db(sql: str, params: dict[str, Any] | None = None):
     """Execute a parameterised SQL statement and return rows or metadata."""
-    with _engine.connect() as conn:
-        result = conn.execute(text(sql), params or {})
-        if result.returns_rows:
-            return [dict(r._mapping) for r in result]
-        return {"rowcount": result.rowcount}
+    params = params or {}
+    logger.debug("Executing query", extra={"sql": sql, "params": params})
+    try:
+        with _engine.connect() as conn:
+            result = conn.execute(text(sql), params)
+            if result.returns_rows:
+                return [dict(r._mapping) for r in result]
+            return {"rowcount": result.rowcount}
+    except SQLAlchemyError:
+        logger.exception("Database query failed: %s", sql)
+        raise

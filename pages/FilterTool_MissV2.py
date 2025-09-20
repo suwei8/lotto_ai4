@@ -1,23 +1,21 @@
 from __future__ import annotations
 
 import collections
-from typing import Dict, List, Set
 
-import altair as alt
 import pandas as pd
 import streamlit as st
-st.set_page_config(page_title="Lotto AI", layout="wide")
 
 from db.connection import query_db
 from utils.cache import cached_query
+from utils.charts import render_digit_frequency_chart
 from utils.data_access import (
     fetch_playtypes_for_issue,
 )
-from utils.ui import issue_picker, playtype_picker, render_open_info
 from utils.numbers import match_prediction_hit, normalize_code, parse_tokens
 from utils.sql import make_in_clause
-from utils.charts import render_digit_frequency_chart
+from utils.ui import issue_picker, playtype_picker, render_open_info
 
+st.set_page_config(page_title="Lotto AI", layout="wide")
 
 st.header("FilterTool_MissV2 - 组合缺失筛选")
 
@@ -37,7 +35,7 @@ if playtype_df.empty:
     st.info("当前期暂无专家推荐。")
     st.stop()
 
-playtype_map: Dict[int, str] = {
+playtype_map: dict[int, str] = {
     int(row.playtype_id): row.playtype_name for row in playtype_df.itertuples()
 }
 playtype_ids = list(playtype_map.keys())
@@ -84,9 +82,7 @@ with st.expander("🔎 筛除连续未命中AI智体设置", expanded=True):
     ref_issue = st.selectbox(
         "🗕️ 回溯统计截至期号",
         options=issue_list_all,
-        index=issue_list_all.index(default_end_issue)
-        if default_end_issue in issue_list_all
-        else 0,
+        index=issue_list_all.index(default_end_issue) if default_end_issue in issue_list_all else 0,
     )
 
     ref_index = issue_list_all.index(ref_issue)
@@ -133,7 +129,11 @@ with st.expander("🔎 筛除连续未命中AI智体设置", expanded=True):
         mode="multi",
         label="🎯 回溯玩法（可多选）",
         include=[str(pid) for pid in playtype_ids],
-        default=[str(pid) for pid in selected_playtypes] if selected_playtypes else [str(playtype_ids[0])] if playtype_ids else [],
+        default=(
+            [str(pid) for pid in selected_playtypes]
+            if selected_playtypes
+            else [str(playtype_ids[0])] if playtype_ids else []
+        ),
     )
     ref_playtypes = [int(pid) for pid in raw_ref_playtypes]
 
@@ -171,9 +171,7 @@ if st.button("🚀 查询推荐数字频次"):
                 WHERE issue_name = :issue
                   AND {current_clause}
             """
-            current_rows = cached_query(
-                query_db, sql_current, params=current_params, ttl=120
-            )
+            current_rows = cached_query(query_db, sql_current, params=current_params, ttl=120)
         except Exception as exc:  # pragma: no cover - defensive UI guard
             st.error(f"加载当前期推荐失败：{exc}")
             st.stop()
@@ -186,9 +184,7 @@ if st.button("🚀 查询推荐数字频次"):
         current_df["playtype_id"] = current_df["playtype_id"].astype(int)
 
         if remove_duplicates:
-            current_df.drop_duplicates(
-                subset=["user_id", "playtype_id", "numbers"], inplace=True
-            )
+            current_df.drop_duplicates(subset=["user_id", "playtype_id", "numbers"], inplace=True)
 
         try:
             issue_rows = cached_query(
@@ -212,27 +208,20 @@ if st.button("🚀 查询推荐数字频次"):
             st.info("所选回溯范围内无专家推荐记录。")
             st.stop()
 
-        result_clause, result_params = make_in_clause(
-            "issue_name", issue_list, "res"
-        )
+        result_clause, result_params = make_in_clause("issue_name", issue_list, "res")
         sql_result = f"""
             SELECT issue_name, open_code
             FROM lottery_results
             WHERE {result_clause}
         """
-        result_rows = cached_query(
-            query_db, sql_result, params=result_params, ttl=120
-        )
+        result_rows = cached_query(query_db, sql_result, params=result_params, ttl=120)
         result_map = {
-            row["issue_name"]: normalize_code(row.get("open_code"))
-            for row in result_rows
+            row["issue_name"]: normalize_code(row.get("open_code")) for row in result_rows
         }
 
         history_df = pd.DataFrame()
         if ref_playtypes:
-            history_clause, history_params = make_in_clause(
-                "issue_name", issue_list, "hist"
-            )
+            history_clause, history_params = make_in_clause("issue_name", issue_list, "hist")
             playtype_clause, playtype_params = make_in_clause(
                 "playtype_id", [int(pid) for pid in ref_playtypes], "pt"
             )
@@ -244,32 +233,28 @@ if st.button("🚀 查询推荐数字频次"):
                   AND {playtype_clause}
             """
             try:
-                history_rows = cached_query(
-                    query_db, sql_history, params=history_params, ttl=120
-                )
+                history_rows = cached_query(query_db, sql_history, params=history_params, ttl=120)
             except Exception as exc:  # pragma: no cover - defensive UI guard
                 st.error(f"加载回溯推荐失败：{exc}")
                 st.stop()
             history_df = pd.DataFrame(history_rows)
             history_df["playtype_id"] = history_df["playtype_id"].astype(int)
 
-        kept_users: Set[str]
+        kept_users: set[str]
         if enable_filter and not history_df.empty:
-            kept: List[str] = []
+            kept: list[str] = []
             issue_sequence = sorted(issue_list)
             result_lookup = result_map
 
             for user_id, group in history_df.groupby("user_id"):
-                group = group.drop_duplicates(
-                    subset=["issue_name", "playtype_id", "numbers"]
-                )
+                group = group.drop_duplicates(subset=["issue_name", "playtype_id", "numbers"])
                 group = group[group["issue_name"].isin(issue_sequence)]
                 if len(group) < lookback_n:
                     continue
 
                 group = group.sort_values("issue_name")
                 group_dict = group.set_index("issue_name")
-                hits: List[bool] = []
+                hits: list[bool] = []
 
                 for issue in issue_sequence:
                     if issue not in group_dict.index:
@@ -281,19 +266,14 @@ if st.button("🚀 查询推荐数字频次"):
                     playtype_name = playtype_map.get(
                         int(row["playtype_id"]), str(row["playtype_id"])
                     )
-                    hit = match_prediction_hit(
-                        playtype_name, row["numbers"], open_code
-                    )
+                    hit = match_prediction_hit(playtype_name, row["numbers"], open_code)
                     hits.append(hit)
 
                 miss_count = hits.count(False)
                 if f"未命中次数 ≤ {miss_threshold_high}" in filter_mode:
                     if miss_count <= miss_threshold_high:
                         kept.append(user_id)
-                elif (
-                    f"{miss_threshold_low} ≤ 未命中次数 ≤ {miss_threshold_high}"
-                    in filter_mode
-                ):
+                elif f"{miss_threshold_low} ≤ 未命中次数 ≤ {miss_threshold_high}" in filter_mode:
                     if miss_threshold_low <= miss_count <= miss_threshold_high:
                         kept.append(user_id)
                 elif "连续必中" in filter_mode:
@@ -317,9 +297,7 @@ if st.button("🚀 查询推荐数字频次"):
             st.stop()
 
         if remove_duplicates and not current_df.empty:
-            current_df.drop_duplicates(
-                subset=["user_id", "playtype_id", "numbers"], inplace=True
-            )
+            current_df.drop_duplicates(subset=["user_id", "playtype_id", "numbers"], inplace=True)
 
         freq_counter = collections.Counter()
         for numbers in current_df["numbers"]:
@@ -352,22 +330,16 @@ if st.button("🚀 查询推荐数字频次"):
             st.altair_chart(chart, use_container_width=True)
 
         included_user_ids = current_df["user_id"].unique().tolist()
-        st.markdown(
-            f"### ✅ 当前期实际参与统计的AI智体（{len(included_user_ids)}个）"
-        )
+        st.markdown(f"### ✅ 当前期实际参与统计的AI智体（{len(included_user_ids)}个）")
 
         if included_user_ids:
-            user_clause, user_params = make_in_clause(
-                "user_id", included_user_ids, "user"
-            )
+            user_clause, user_params = make_in_clause("user_id", included_user_ids, "user")
             sql_users = f"""
                 SELECT user_id, nick_name
                 FROM expert_info
                 WHERE {user_clause}
             """
-            user_rows = cached_query(
-                query_db, sql_users, params=user_params, ttl=300
-            )
+            user_rows = cached_query(query_db, sql_users, params=user_params, ttl=300)
             user_info_df = pd.DataFrame(user_rows)
 
             current_df["playtype_name"] = current_df["playtype_id"].apply(
@@ -383,9 +355,7 @@ if st.button("🚀 查询推荐数字频次"):
                 .reset_index()
             )
 
-            display_df = user_info_df.merge(
-                recommend_summary, on="user_id", how="left"
-            ).rename(
+            display_df = user_info_df.merge(recommend_summary, on="user_id", how="left").rename(
                 columns={
                     "user_id": "用户ID",
                     "nick_name": "专家昵称",

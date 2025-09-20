@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Sequence
+from typing import Iterable, Sequence
 
 from sqlalchemy import text
 
@@ -22,11 +22,9 @@ def _coerce_numbers(numbers: object) -> str:
         return numbers
     if isinstance(numbers, Sequence):
         if numbers and isinstance(numbers[0], Sequence):
-            parts: List[str] = []
+            parts: list[str] = []
             for group in numbers:  # type: ignore[arg-type]
-                parts.append(
-                    ",".join(str(int(num)) for num in group if num is not None)
-                )
+                parts.append(",".join(str(int(num)) for num in group if num is not None))
             return "|".join(parts)
         return ",".join(str(int(num)) for num in numbers if num is not None)
     return str(numbers)
@@ -36,7 +34,9 @@ _POS_SUFFIXES = ["百位", "十位", "个位"]
 _SPLIT_PLAYTYPES = {3003, 3004, 3005}
 
 
-def expand_scheme(playtype_id: int, playtype_name: str, numbers: object) -> Iterable[ExpandedScheme]:
+def expand_scheme(
+    playtype_id: int, playtype_name: str, numbers: object
+) -> Iterable[ExpandedScheme]:
     number_string = _coerce_numbers(numbers)
     if playtype_id in _SPLIT_PLAYTYPES and "|" in number_string:
         parts = number_string.split("|")
@@ -81,20 +81,24 @@ def upsert_prediction(
 ) -> None:
     engine = get_engine()
     with engine.begin() as conn:
-        existing = conn.execute(
-            text(
-                """
+        existing = (
+            conn.execute(
+                text(
+                    """
                 SELECT id, numbers
                 FROM expert_predictions
                 WHERE user_id = :user_id AND issue_name = :issue_name AND playtype_id = :playtype_id
                 """
-            ),
-            {
-                "user_id": user_id,
-                "issue_name": issue_name,
-                "playtype_id": scheme.playtype_id,
-            },
-        ).mappings().first()
+                ),
+                {
+                    "user_id": user_id,
+                    "issue_name": issue_name,
+                    "playtype_id": scheme.playtype_id,
+                },
+            )
+            .mappings()
+            .first()
+        )
         if existing:
             if (existing.get("numbers") or "") == scheme.numbers:
                 return

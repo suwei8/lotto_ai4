@@ -37,14 +37,25 @@ Xuanhao_3D_P3.py
    source .venv/bin/activate
    pip install -r requirements.txt
    ```
-2. **配置数据库**
+2. **配置环境变量**
+   ```bash
+   cp .env.example .env
+   # 编辑 .env，填入数据库与采集接口凭证
+   ```
+   关键变量说明：
+   - `LOTTO_DB_URL`：SQLAlchemy 数据库连接串（默认指向本地 127.0.0.1，可根据部署环境调整）。
+   - `LOTTO_DB_POOL_*`：数据库连接池参数，影响并发访问能力。
+   - `LOTTO_LOG_LEVEL`：应用日志级别。
+   - `COLLECTOR_*`：采集接口所需域名、Token、AES 密钥等参数。
+   `config/settings.py` 会在应用启动时自动加载 `.env`，缺失变量会使用安全默认值并打印警告，必要变量缺失将抛出异常提醒补全。
+3. **配置数据库**
    - MySQL 运行在 Docker 容器 `mysql`，只读账号：`root`/`sw63828`，数据库：`lotto_3d`。
-   - 应用与数据库需处于同一 Docker network，连接串位于 `db/connection.py`：
+   - 应用与数据库需处于同一 Docker network，连接串可在 `.env` 中覆盖；默认值为：
      ```
-     mysql+pymysql://root:sw63828@mysql:3306/lotto_3d?charset=utf8mb4
+     mysql+pymysql://root:sw63828@127.0.0.1:3306/lotto_3d?charset=utf8mb4
      ```
-   - 若容器通过宿主端口暴露，请将连接地址改为 `127.0.0.1:3306`。
-3. **运行数据采集脚本（可选）**
+   - 若容器通过宿主端口暴露，请将连接地址改为 `127.0.0.1:3306` 或目标主机地址。
+4. **运行数据采集脚本（可选）**
    - `collector/lotto3d.py`：拉取专家榜单与推荐（运行结束会自动刷新 Streamlit 缓存）。
    - `collector/lottery_results.py`：采集最近开奖信息。
    ```bash
@@ -52,7 +63,7 @@ Xuanhao_3D_P3.py
    python collector/lotto3d.py
    python collector/lottery_results.py
    ```
-4. **启动应用**
+5. **启动应用**
    ```bash
    streamlit run app.py
    ```
@@ -77,15 +88,25 @@ Xuanhao_3D_P3.py
 - `tests/test_cache.py`：缓存键策略与参数化缓存命中验证。
 - `tests/test_numbers.py`：号码解析、命中计算等纯算法函数。
 
+- 代码质量工具（可选）：
+  ```bash
+  ruff check .
+  black --check .
+  ```
+  项目使用 `pyproject.toml` 统一配置 `black`、`ruff` 和 `pytest`，无需额外参数即可保持一致的检查规则。
+
 ## 目录结构速览
 ```
-app.py                 # Streamlit 入口
+app.py                 # Streamlit 入口（首页与诊断面板）
+app_sections/          # 首页（Dashboard）拆分的复用模块
 collector/             # 数据采集脚本（专家榜单、开奖信息等）
+config/                # 环境变量与日志配置加载器
 db/connection.py       # SQLAlchemy 引擎与 query_db 封装
 utils/                 # 公共工具（缓存、分页、UI 组件、图表、命中计算等）
 pages/                 # 所有页面脚本
-.tests/                # pytest 测试用例
+tests/                 # pytest 测试用例
 docs/                  # 需求文档、组件使用说明
+pyproject.toml         # black / ruff / pytest 统一配置
 .streamlit/config.toml # Streamlit 主题设置
 ```
 

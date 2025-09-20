@@ -1,20 +1,22 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import random
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Iterable, Sequence
 
 import requests
 from sqlalchemy import text
 
+from config.settings import configure_logging
 from db.connection import get_engine
 from utils.cache_control import bump_cache_token
 
 BASE_URL = "https://mix.lottery.sina.com.cn/gateway/index/entry"
-DEFAULT_PARAMS: Dict[str, str] = {
+DEFAULT_PARAMS: dict[str, str] = {
     "format": "json",
     "__caller__": "wap",
     "__version__": "1.0.0",
@@ -23,6 +25,9 @@ DEFAULT_PARAMS: Dict[str, str] = {
     "paginationType": "1",
     "dpc": "1",
 }
+
+
+logger = logging.getLogger(__name__)
 
 
 class LotteryCollectorError(RuntimeError):
@@ -38,15 +43,15 @@ class LotteryResult:
     span: int
     odd_even_ratio: str
     big_small_ratio: str
-    open_time: Optional[datetime]
+    open_time: datetime | None
 
 
-def _remove_leading_zero(values: Sequence[object] | str) -> List[str]:
+def _remove_leading_zero(values: Sequence[object] | str) -> list[str]:
     if isinstance(values, str):
         candidates: Iterable[object] = values.split(",")
     else:
         candidates = values
-    cleaned: List[str] = []
+    cleaned: list[str] = []
     for token in candidates:
         token_str = str(token).strip()
         if not token_str:
@@ -63,7 +68,7 @@ def _normalize_issue(issue: str) -> str:
     return issue
 
 
-def _parse_open_time(raw: str) -> Optional[datetime]:
+def _parse_open_time(raw: str) -> datetime | None:
     if not raw:
         return None
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
@@ -77,7 +82,7 @@ def _parse_open_time(raw: str) -> Optional[datetime]:
         return None
 
 
-def _compute_metrics(numbers: Sequence[int]) -> Dict[str, object]:
+def _compute_metrics(numbers: Sequence[int]) -> dict[str, object]:
     if not numbers:
         raise ValueError("numbers must not be empty")
     total_sum = sum(numbers)
@@ -94,7 +99,7 @@ def _compute_metrics(numbers: Sequence[int]) -> Dict[str, object]:
     }
 
 
-def _extract_result(item: Dict[str, object], lottery_name: str) -> Optional[LotteryResult]:
+def _extract_result(item: dict[str, object], lottery_name: str) -> LotteryResult | None:
     issue_no = _normalize_issue(str(item.get("issueNo", "")).strip())
     if not issue_no:
         return None
@@ -128,7 +133,9 @@ def _extract_result(item: Dict[str, object], lottery_name: str) -> Optional[Lott
     )
 
 
-def _request_page(session: requests.Session, params: Dict[str, str], page: int) -> Dict[str, object]:
+def _request_page(
+    session: requests.Session, params: dict[str, str], page: int
+) -> dict[str, object]:
     payload = dict(params)
     payload["page"] = str(page)
     response = session.get(BASE_URL, params=payload, timeout=10)
@@ -142,27 +149,27 @@ def _request_page(session: requests.Session, params: Dict[str, str], page: int) 
 
 def _yield_results(
     session: requests.Session,
-    base_params: Dict[str, str],
+    base_params: dict[str, str],
     lottery_name: str,
-    max_pages: Optional[int],
-    sleep_range: Optional[tuple[float, float]],
+    max_pages: int | None,
+    sleep_range: tuple[float, float] | None,
 ) -> Iterable[LotteryResult]:
     page = 1
     total_page = None
     while max_pages is None or page <= max_pages:
-        print(f"📄 正在采集第 {page} 页开奖数据…")
+        logger.info("采集开奖数据，第 %s 页…", page)
         if sleep_range:
             delay = random.uniform(*sleep_range)
-            print(f"😴 休息 {delay:.2f} 秒后请求")
+            logger.debug("休息 %.2f 秒后发起请求", delay)
             time.sleep(delay)
         try:
             result_block = _request_page(session, base_params, page)
         except Exception as exc:  # noqa: BLE001
-            print(f"⚠️ 请求第 {page} 页失败：{exc}")
+            logger.warning("请求第 %s 页失败：%s", page, exc)
             break
         items = result_block.get("data") or []
         if not items:
-            print("ℹ️ 没有更多数据，提前结束。")
+            logger.info("没有更多数据，提前结束。")
             break
         for raw in items:
             parsed = _extract_result(raw, lottery_name)
@@ -177,23 +184,27 @@ def _yield_results(
                 total_page = 1
         page += 1
         if total_page and page > total_page:
-            print("✅ 已达到接口的最大页数。")
+            logger.info("已达到接口的最大页数。")
             break
 
 
-def _persist_results(results: Iterable[LotteryResult]) -> Dict[str, int]:
+def _persist_results(results: Iterable[LotteryResult]) -> dict[str, int]:
     engine = get_engine()
     inserted = 0
     skipped = 0
     updated = 0
     with engine.begin() as conn:
         for record in results:
-            existing = conn.execute(
-                text(
-                    "SELECT id, open_code FROM lottery_results WHERE issue_name = :issue AND lottery_name = :lottery LIMIT 1"
-                ),
-                {"issue": record.issue_name, "lottery": record.lottery_name},
-            ).mappings().first()
+            existing = (
+                conn.execute(
+                    text(
+                        "SELECT id, open_code FROM lottery_results WHERE issue_name = :issue AND lottery_name = :lottery LIMIT 1"
+                    ),
+                    {"issue": record.issue_name, "lottery": record.lottery_name},
+                )
+                .mappings()
+                .first()
+            )
             payload = {
                 "lottery_name": record.lottery_name,
                 "issue_name": record.issue_name,
@@ -246,14 +257,14 @@ def collect_lottery_results(
     lottery_name: str = "福彩3D",
     lotto_type: str = "102",
     page_size: int = 5,
-    max_pages: Optional[int] = None,
+    max_pages: int | None = None,
     sleep_min: float = 1.2,
     sleep_max: float = 2.4,
-) -> Dict[str, int]:
+) -> dict[str, int]:
     params = {**DEFAULT_PARAMS}
     params.update({"lottoType": str(lotto_type), "pageSize": str(page_size)})
     session = requests.Session()
-    sleep_range: Optional[tuple[float, float]] = None
+    sleep_range: tuple[float, float] | None = None
     if sleep_min > 0 and sleep_max > 0 and sleep_max >= sleep_min:
         sleep_range = (sleep_min, sleep_max)
     results = list(
@@ -266,21 +277,22 @@ def collect_lottery_results(
         )
     )
     if not results:
-        print("⚠️ 未获取到任何开奖数据。")
+        logger.warning("未获取到任何开奖数据。")
         return {"inserted": 0, "updated": 0, "skipped": 0}
     stats = _persist_results(results)
     bump_cache_token()
-    print("🔄 已刷新前端缓存标记。")
-    print(
-        "✅ 开奖采集完成："
-        f"新增 {stats['inserted']} 条，"
-        f"更新 {stats['updated']} 条，"
-        f"跳过 {stats['skipped']} 条。"
+    logger.info("已刷新前端缓存标记。")
+    logger.info(
+        "开奖采集完成：新增 %s 条，更新 %s 条，跳过 %s 条。",
+        stats["inserted"],
+        stats["updated"],
+        stats["skipped"],
     )
     return stats
 
 
 def main() -> None:
+    configure_logging()
     parser = argparse.ArgumentParser(description="采集开奖数据并写入 lottery_results 表")
     parser.add_argument("--lottery-name", default="福彩3D", help="彩票名称，用于标记数据库记录")
     parser.add_argument("--lotto-type", default="102", help="Sina 接口的 lottoType 参数")

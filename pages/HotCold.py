@@ -4,12 +4,13 @@ from collections import Counter
 
 import pandas as pd
 import streamlit as st
-st.set_page_config(page_title="Lotto AI", layout="wide")
 
 from db.connection import query_db
 from utils.cache import cached_query
-from utils.numbers import normalize_code
 from utils.charts import render_digit_frequency_chart
+from utils.numbers import normalize_code
+
+st.set_page_config(page_title="Lotto AI", layout="wide")
 
 st.header("HotCold - 开奖冷热分析")
 
@@ -40,9 +41,7 @@ lottery_df["hundreds"] = lottery_df["digits"].apply(lambda values: values[0])
 lottery_df["tens"] = lottery_df["digits"].apply(lambda values: values[1])
 lottery_df["units"] = lottery_df["digits"].apply(lambda values: values[2])
 
-st.caption(
-    f"统计范围：最近 {len(lottery_df)} 期（最新期 {lottery_df.iloc[0]['issue_name']}）"
-)
+st.caption(f"统计范围：最近 {len(lottery_df)} 期（最新期 {lottery_df.iloc[0]['issue_name']}）")
 
 history_view = lottery_df[
     ["issue_name", "open_code", "sum", "span", "odd_even_ratio", "big_small_ratio"]
@@ -90,12 +89,8 @@ top_k = st.slider("热榜 TopK", min_value=3, max_value=10, value=5)
 hot_list = overall_df.sort_values(by="count", ascending=False).head(top_k)
 cold_list = overall_df.sort_values(by="count", ascending=True).head(top_k)
 
-st.write(
-    "热号：", ", ".join(f"{row.digit}({row.count})" for row in hot_list.itertuples())
-)
-st.write(
-    "冷号：", ", ".join(f"{row.digit}({row.count})" for row in cold_list.itertuples())
-)
+st.write("热号：", ", ".join(f"{row.digit}({row.count})" for row in hot_list.itertuples()))
+st.write("冷号：", ", ".join(f"{row.digit}({row.count})" for row in cold_list.itertuples()))
 
 
 # Position specific analysis
@@ -119,6 +114,7 @@ positions = {
 st.subheader("分位冷热分析")
 cols = st.columns(3)
 for col, (title, data) in zip(cols, positions.items()):
+    col.subheader(title)
     display_df = data.rename(columns={"digit": "数字", "count": "出现次数"})
     col.dataframe(display_df, width="stretch")
     chart = render_digit_frequency_chart(

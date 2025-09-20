@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
-
 LOTTERY_ID = 6  # 福彩3D
 DEFAULT_LIMIT = 1000
 DEFAULT_ISSUE_COUNT = 5

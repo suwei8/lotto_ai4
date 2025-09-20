@@ -3,13 +3,13 @@ from __future__ import annotations
 import altair as alt
 import pandas as pd
 import streamlit as st
-st.set_page_config(page_title="Lotto AI", layout="wide")
 
 from db.connection import query_db
 from utils.cache import cached_query
 from utils.data_access import fetch_playtypes
 from utils.ui import issue_picker
-from utils.numbers import parse_tokens
+
+st.set_page_config(page_title="Lotto AI", layout="wide")
 
 
 def flatten_numbers(numbers: str) -> list[str]:
@@ -62,17 +62,13 @@ sql_predictions = """
     FROM expert_predictions
     WHERE issue_name = :issue
 """
-prediction_rows = cached_query(
-    query_db, sql_predictions, params={"issue": selected_issue}, ttl=300
-)
+prediction_rows = cached_query(query_db, sql_predictions, params={"issue": selected_issue}, ttl=300)
 if not prediction_rows:
     st.info("未查询到预测记录。")
     st.stop()
 
 pred_df = pd.DataFrame(prediction_rows)
-pred_df["playtype_name"] = pred_df["playtype_id"].apply(
-    lambda pid: playtype_map.get(pid, str(pid))
-)
+pred_df["playtype_name"] = pred_df["playtype_id"].apply(lambda pid: playtype_map.get(pid, str(pid)))
 
 lottery_rows = cached_query(
     query_db,
@@ -109,30 +105,23 @@ for playtype_id, group in pred_df.groupby("playtype_id"):
         for token in flatten_numbers(numbers):
             for digit in token:
                 if digit.isdigit():
-                    heatmap_records.append(
-                        {"playtype_name": playtype_name, "digit": digit}
-                    )
+                    heatmap_records.append({"playtype_name": playtype_name, "digit": digit})
 
 heatmap_df = pd.DataFrame(heatmap_records)
 if heatmap_df.empty:
     st.info("无法生成热力图数据。")
 else:
     heatmap_df["count"] = 1
-    heatmap_df = heatmap_df.groupby(["playtype_name", "digit"], as_index=False)[
-        "count"
-    ].sum()
+    heatmap_df = heatmap_df.groupby(["playtype_name", "digit"], as_index=False)["count"].sum()
     chart = (
         alt.Chart(heatmap_df)
         .mark_rect()
         .encode(
             x=alt.X("digit:N", title="数字"),
             y=alt.Y("playtype_name:N", title="玩法"),
-            color=alt.Color(
-                "count:Q", title="推荐次数", scale=alt.Scale(scheme="tealblues")
-            ),
+            color=alt.Color("count:Q", title="推荐次数", scale=alt.Scale(scheme="tealblues")),
             tooltip=["playtype_name", "digit", "count"],
         )
         .properties(width="container", height=400)
     )
     st.altair_chart(chart, use_container_width=True)
-

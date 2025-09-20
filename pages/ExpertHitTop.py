@@ -3,16 +3,16 @@ from __future__ import annotations
 import altair as alt
 import pandas as pd
 import streamlit as st
-st.set_page_config(page_title="Lotto AI", layout="wide")
 
 from db.connection import query_db
 from utils.cache import cached_query
 from utils.data_access import (
     fetch_playtypes_for_issue,
 )
+from utils.sql import make_in_clause
 from utils.ui import issue_picker, playtype_picker, render_open_info
 
-from utils.sql import make_in_clause
+st.set_page_config(page_title="Lotto AI", layout="wide")
 
 st.header("Expert Hit Top - 本期命中榜")
 
@@ -31,9 +31,7 @@ if playtypes_df.empty:
     st.info("当前期未找到可用玩法。")
     st.stop()
 
-playtype_map = {
-    int(row.playtype_id): row.playtype_name for row in playtypes_df.itertuples()
-}
+playtype_map = {int(row.playtype_id): row.playtype_name for row in playtypes_df.itertuples()}
 raw_playtypes = playtype_picker(
     "expert_hit_playtypes",
     mode="multi",
@@ -47,9 +45,7 @@ if not selected_playtypes:
     st.warning("请至少选择一个玩法。")
     st.stop()
 
-playtype_clause, playtype_params = make_in_clause(
-    "p.playtype_id", selected_playtypes, "pt"
-)
+playtype_clause, playtype_params = make_in_clause("p.playtype_id", selected_playtypes, "pt")
 
 sql_predictions = f"""
     SELECT p.user_id, p.playtype_id, p.numbers
@@ -78,9 +74,7 @@ numbers_map = (
     .reset_index()
 )
 
-stat_clause, stat_clause_params = make_in_clause(
-    "playtype_id", selected_playtypes, "pt_stat"
-)
+stat_clause, stat_clause_params = make_in_clause("playtype_id", selected_playtypes, "pt_stat")
 stat_params = {"issue": selected_issue, **stat_clause_params}
 
 stats_sql = f"""
@@ -105,9 +99,7 @@ hit_stats_df = stats_df[stats_df["hit_count"] > 0].copy()
 if hit_stats_df.empty:
     st.info("本期暂无命中专家。")
 else:
-    hit_stats_df = hit_stats_df.merge(
-        numbers_map, how="left", on=["user_id", "playtype_id"]
-    )
+    hit_stats_df = hit_stats_df.merge(numbers_map, how="left", on=["user_id", "playtype_id"])
     hit_stats_df["numbers"] = hit_stats_df["numbers"].fillna("-")
     hit_stats_df["playtype_name"] = hit_stats_df["playtype_id"].map(playtype_map)
 
@@ -121,9 +113,7 @@ else:
     )
     nick_map = {row["user_id"]: row.get("nick_name") for row in nick_rows}
 
-    playtype_ids = (
-        hit_stats_df["playtype_id"].dropna().astype(int).unique().tolist()
-    )
+    playtype_ids = hit_stats_df["playtype_id"].dropna().astype(int).unique().tolist()
     if playtype_ids:
         pt_clause, pt_params = make_in_clause("playtype_id", playtype_ids, "ptid")
         history_params = {**user_params, **pt_params}
@@ -182,11 +172,7 @@ else:
     st.dataframe(hits_view, width="stretch")
 
 st.subheader("本期玩法命中率热力图")
-rate_df = (
-    stats_df.groupby("playtype_id")[["total_count", "hit_count"]]
-    .sum()
-    .reset_index()
-)
+rate_df = stats_df.groupby("playtype_id")[["total_count", "hit_count"]].sum().reset_index()
 rate_df["hit_rate"] = rate_df.apply(
     lambda row: row["hit_count"] / row["total_count"] if row["total_count"] else 0,
     axis=1,
@@ -203,9 +189,7 @@ else:
         .encode(
             x=alt.X("playtype_name:N", title="玩法"),
             y=alt.Y("hit_rate:Q", title="命中率", axis=alt.Axis(format="%")),
-            color=alt.Color(
-                "hit_rate:Q", title="命中率", scale=alt.Scale(scheme="greens")
-            ),
+            color=alt.Color("hit_rate:Q", title="命中率", scale=alt.Scale(scheme="greens")),
             tooltip=[
                 "playtype_name",
                 alt.Tooltip("hit_rate:Q", format=".2%", title="命中率"),

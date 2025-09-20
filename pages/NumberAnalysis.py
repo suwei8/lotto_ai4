@@ -1,25 +1,25 @@
 from __future__ import annotations
 
-from typing import List
+from itertools import permutations
 
 import pandas as pd
 import streamlit as st
-st.set_page_config(page_title="Lotto AI", layout="wide")
-from itertools import permutations
 
 from db.connection import query_db
 from utils.cache import cached_query
 from utils.data_access import fetch_playtypes
-from utils.ui import issue_picker, playtype_picker, render_open_info
 from utils.numbers import parse_tokens
+from utils.ui import issue_picker, playtype_picker, render_open_info
+
+st.set_page_config(page_title="Lotto AI", layout="wide")
 
 
-def _normalize_combo(tokens: List[str]) -> str:
+def _normalize_combo(tokens: list[str]) -> str:
     return "".join(sorted(tokens))
 
 
-def _digits_from_tokens(tokens: List[str]) -> List[int]:
-    digits: List[int] = []
+def _digits_from_tokens(tokens: list[str]) -> list[int]:
+    digits: list[int] = []
     for token in tokens:
         for char in token:
             if char.isdigit():
@@ -105,12 +105,8 @@ combo_df["even_count"] = combo_df["digits"].apply(
 combo_df["odd_even_ratio"] = combo_df.apply(
     lambda row: f"{row['odd_count']}:{row['even_count']}", axis=1
 )
-combo_df["big_count"] = combo_df["digits"].apply(
-    lambda values: sum(1 for v in values if v >= 5)
-)
-combo_df["small_count"] = combo_df["digits"].apply(
-    lambda values: sum(1 for v in values if v < 5)
-)
+combo_df["big_count"] = combo_df["digits"].apply(lambda values: sum(1 for v in values if v >= 5))
+combo_df["small_count"] = combo_df["digits"].apply(lambda values: sum(1 for v in values if v < 5))
 combo_df["big_small_ratio"] = combo_df.apply(
     lambda row: f"{row['big_count']}:{row['small_count']}", axis=1
 )
@@ -161,9 +157,7 @@ with st.expander("过滤器", expanded=False):
             "筛选包含以下数字", options=digits_options, key="filter_include_digits"
         )
 
-filtered_df = combo_df[
-    combo_df["count"].between(selected_count[0], selected_count[1])
-].copy()
+filtered_df = combo_df[combo_df["count"].between(selected_count[0], selected_count[1])].copy()
 
 if excluded_digits:
     excluded_set = set(excluded_digits)
@@ -176,9 +170,7 @@ if excluded_digits:
 if include_digits:
     include_set = set(include_digits)
     filtered_df = filtered_df[
-        filtered_df["digits"].apply(
-            lambda digits: include_set.issubset({str(d) for d in digits})
-        )
+        filtered_df["digits"].apply(lambda digits: include_set.issubset({str(d) for d in digits}))
     ]
 
 if excluded_sums:
@@ -188,14 +180,10 @@ if excluded_spans:
     filtered_df = filtered_df[~filtered_df["span"].isin(excluded_spans)]
 
 if excluded_odd_even:
-    filtered_df = filtered_df[
-        ~filtered_df["odd_even_ratio"].isin(excluded_odd_even)
-    ]
+    filtered_df = filtered_df[~filtered_df["odd_even_ratio"].isin(excluded_odd_even)]
 
 if excluded_big_small:
-    filtered_df = filtered_df[
-        ~filtered_df["big_small_ratio"].isin(excluded_big_small)
-    ]
+    filtered_df = filtered_df[~filtered_df["big_small_ratio"].isin(excluded_big_small)]
 
 summary_table = filtered_df[["combo_key", "count"]].copy()
 summary_table.rename(columns={"combo_key": "号码组合", "count": "出现次数"}, inplace=True)
@@ -211,9 +199,7 @@ if not summary_table.empty:
     if search_term:
         query = search_term.strip()
         if query:
-            matches = summary_table[
-                summary_table["号码组合"].str.contains(query, regex=False)
-            ]
+            matches = summary_table[summary_table["号码组合"].str.contains(query, regex=False)]
             if matches.empty:
                 st.info("未找到匹配的组合。")
             else:
@@ -253,16 +239,10 @@ if not summary_table.empty:
         f"{bet_code_text} 共{bet_count}注，组选{group_multiplier}倍，直选{direct_multiplier}倍 {cost}元",
         height=80,
     )
-    st.markdown(
-        f"**投注注数：{total_count} 注（组选 {group_count} 注 + 直选 {direct_count} 注）**"
-    )
+    st.markdown(f"**投注注数：{total_count} 注（组选 {group_count} 注 + 直选 {direct_count} 注）**")
     st.markdown(f"**投注成本：{cost} 元**")
-    st.markdown(
-        f"**奖金合计：{bonus} 元（假设组选与直选各命中1注）**"
-    )
-    st.markdown(
-        f"**纯收益：{'盈利' if profit >= 0 else '亏损'} {abs(profit)} 元**"
-    )
+    st.markdown(f"**奖金合计：{bonus} 元（假设组选与直选各命中1注）**")
+    st.markdown(f"**纯收益：{'盈利' if profit >= 0 else '亏损'} {abs(profit)} 元**")
 
     with st.expander("🎯 号码组合全排列转换（适用于组选）", expanded=False):
         enable_permutation = st.checkbox(
@@ -314,9 +294,7 @@ if not summary_table.empty:
                 f"**投注注数：{perm_total_count} 注（组选 {perm_group_count} 注 + 直选 {perm_direct_count} 注）**"
             )
             st.markdown(f"**投注成本：{perm_cost} 元**")
-            st.markdown(
-                f"**奖金合计：{perm_bonus} 元（假设组选与直选各命中1注）**"
-            )
+            st.markdown(f"**奖金合计：{perm_bonus} 元（假设组选与直选各命中1注）**")
             st.markdown(
                 f"**纯收益：{'盈利' if perm_profit >= 0 else '亏损'} {abs(perm_profit)} 元**"
             )

@@ -1,24 +1,24 @@
 from __future__ import annotations
 
+from collections import Counter
+from typing import Sequence
+
 import pandas as pd
 import streamlit as st
-from collections import Counter
-from typing import Dict, List, Sequence, Set
 
 from db.connection import query_db
 from utils.cache import cached_query
+from utils.charts import render_digit_frequency_chart
 from utils.data_access import (
     fetch_lottery_info,
     fetch_lottery_infos,
     fetch_playtypes_for_issue,
-    fetch_predictions,
     fetch_predicted_issues,
+    fetch_predictions,
 )
 from utils.numbers import match_prediction_hit, normalize_code, parse_tokens
 from utils.sql import make_in_clause
 from utils.ui import issue_picker, playtype_picker, render_open_info
-from utils.charts import render_digit_frequency_chart
-
 
 st.set_page_config(page_title="🎯 专家推荐筛选器 Pro", layout="wide")
 st.title("🎯 专家推荐筛选器 Pro")
@@ -28,7 +28,7 @@ def clear_cached_result():
     st.session_state.pop("uefp_result", None)
 
 
-def fetch_expert_names(user_ids: Sequence[int]) -> Dict[int, str]:
+def fetch_expert_names(user_ids: Sequence[int]) -> dict[int, str]:
     if not user_ids:
         return {}
     clause, params = make_in_clause("user_id", user_ids, "uid")
@@ -39,7 +39,7 @@ def fetch_expert_names(user_ids: Sequence[int]) -> Dict[int, str]:
     return {int(row["user_id"]): row.get("nick_name") or "未知" for row in rows}
 
 
-def extract_digit_set(numbers: str) -> Set[str]:
+def extract_digit_set(numbers: str) -> set[str]:
     tokens = parse_tokens(numbers)
     digits: list[str] = []
     for token in tokens:
@@ -59,16 +59,16 @@ def render_horizontal_chart(freq_df: pd.DataFrame, open_digits: Sequence[str]):
 
 def users_matching_number_conditions(
     df: pd.DataFrame,
-    conditions: List[Dict[str, object]],
-) -> Set[int]:
+    conditions: list[dict[str, object]],
+) -> set[int]:
     all_users = set(df["user_id"].unique())
     if not conditions:
         return all_users
 
     candidate = all_users.copy()
     for cond in conditions:
-        digits: List[str] = cond.get("digits", [])  # type: ignore[assignment]
-        playtypes: List[int] = cond.get("playtypes", [])  # type: ignore[assignment]
+        digits: list[str] = cond.get("digits", [])  # type: ignore[assignment]
+        playtypes: list[int] = cond.get("playtypes", [])  # type: ignore[assignment]
         mode: str = cond.get("mode", "包含")  # type: ignore[assignment]
         match_mode: str = cond.get("match", "任意匹配")  # type: ignore[assignment]
 
@@ -80,7 +80,7 @@ def users_matching_number_conditions(
             candidate.clear()
             break
 
-        cond_users: Set[int] = set()
+        cond_users: set[int] = set()
         for user_id, group in relevant.groupby("user_id"):
             if mode == "包含":
                 for digit_set in group["digit_set"]:
@@ -107,7 +107,7 @@ def users_matching_number_conditions(
 
 def gather_hit_records(
     issue_sequence: Sequence[str], playtype_id: int, playtype_name: str
-) -> Dict[int, Dict[str, bool]]:
+) -> dict[int, dict[str, bool]]:
     if not issue_sequence:
         return {}
 
@@ -116,7 +116,7 @@ def gather_hit_records(
         return {}
 
     info_map = fetch_lottery_infos(issue_sequence)
-    records: Dict[int, Dict[str, bool]] = {}
+    records: dict[int, dict[str, bool]] = {}
 
     for (user_id, issue_name), group in predictions_df.groupby(["user_id", "issue_name"]):
         open_info = info_map.get(issue_name)
@@ -133,11 +133,11 @@ def gather_hit_records(
 
 
 def users_matching_hit_conditions(
-    conditions: List[Dict[str, object]],
-    issues: List[str],
+    conditions: list[dict[str, object]],
+    issues: list[str],
     selected_issue: str,
-    playtype_map: Dict[int, str],
-) -> Set[int]:
+    playtype_map: dict[int, str],
+) -> set[int]:
     if not conditions:
         return set()
 
@@ -150,7 +150,7 @@ def users_matching_hit_conditions(
     if not available_history:
         return set()
 
-    candidate: Set[int] | None = None
+    candidate: set[int] | None = None
 
     for cond in conditions:
         playtype_id = int(cond.get("playtype", available_history and 0))
@@ -164,7 +164,7 @@ def users_matching_hit_conditions(
             sequence = available_history[:recent_n]
 
         if not sequence:
-            cond_users: Set[int] = set()
+            cond_users: set[int] = set()
         else:
             records = gather_hit_records(sequence, playtype_id, playtype_name)
             if not records:
@@ -241,9 +241,7 @@ if playtypes_df.empty:
     st.info("当前期号下无推荐数据。")
     st.stop()
 
-playtype_map = {
-    int(row.playtype_id): row.playtype_name for row in playtypes_df.itertuples()
-}
+playtype_map = {int(row.playtype_id): row.playtype_name for row in playtypes_df.itertuples()}
 playtype_ids = list(playtype_map.keys())
 
 previous_playtype = st.session_state.get("uefp_playtype_last")
@@ -462,7 +460,7 @@ if st.button("📥 执行筛选并查询推荐"):
             issue_predictions["user_id"] = issue_predictions["user_id"].astype(int)
             issue_predictions["digit_set"] = issue_predictions["numbers"].apply(extract_digit_set)
 
-            number_conditions_payload: List[Dict[str, object]] = []
+            number_conditions_payload: list[dict[str, object]] = []
             for cond in st.session_state["filter_conditions"]:
                 digits = [d for d in cond.get("numbers", []) if d]
                 playtypes = [int(pid) for pid in cond.get("playtypes", []) if pid is not None]
@@ -487,13 +485,13 @@ if st.button("📥 执行筛选并查询推荐"):
                 issue_predictions, number_conditions_payload
             )
 
-            hit_conditions_payload: List[Dict[str, object]] = []
+            hit_conditions_payload: list[dict[str, object]] = []
             for cond in st.session_state["hit_conditions"]:
                 playtype_value = cond.get("playtype")
                 if playtype_value is None:
                     continue
                 mode = cond.get("mode", "上期命中") or "上期命中"
-                payload: Dict[str, object] = {
+                payload: dict[str, object] = {
                     "playtype": int(playtype_value),
                     "mode": mode,
                 }
@@ -560,7 +558,7 @@ if "uefp_result" in st.session_state:
     else:
         issue_name = cached["issue_name"]
         target_playtype_name = cached["target_playtype_name"]
-        user_ids: List[int] = cached["user_ids"]
+        user_ids: list[int] = cached["user_ids"]
         open_info = cached.get("open_info") or {}
         nick_map = cached.get("nick_map") or {}
 
@@ -599,13 +597,18 @@ if "uefp_result" in st.session_state:
         if number_counter:
             freq_df = (
                 pd.DataFrame(
-                    [{"数字": digit, "被推荐次数": count} for digit, count in number_counter.items()]
+                    [
+                        {"数字": digit, "被推荐次数": count}
+                        for digit, count in number_counter.items()
+                    ]
                 )
                 .sort_values("被推荐次数", ascending=False)
                 .reset_index(drop=True)
             )
             hit_digit_count = (
-                sum(1 for digit in freq_df["数字"] if digit in open_digit_set) if has_open_code else 0
+                sum(1 for digit in freq_df["数字"] if digit in open_digit_set)
+                if has_open_code
+                else 0
             )
             st.markdown(
                 f"#### 🎯 推荐数字热力图（共 {len(freq_df)} 个数字，命中：{hit_digit_count} 个）"
