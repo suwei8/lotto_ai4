@@ -6,11 +6,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from utils.data_access import (
-    fetch_lottery_infos,
-    fetch_playtypes,
-    fetch_predictions,
-)
+from utils.data_access import fetch_lottery_infos, fetch_playtypes, fetch_predictions
 from utils.numbers import normalize_code, parse_tokens
 from utils.ui import issue_picker, playtype_picker
 
@@ -58,8 +54,7 @@ if not predictions_df.empty:
 charts: list[tuple[str, pd.DataFrame, alt.Chart]] = []
 if not predictions_df.empty:
     grouped_numbers = {
-        issue: group["numbers"].tolist()
-        for issue, group in predictions_df.groupby("issue_name")
+        issue: group["numbers"].tolist() for issue, group in predictions_df.groupby("issue_name")
     }
     for issue in selected_issues:
         numbers_list = grouped_numbers.get(issue)

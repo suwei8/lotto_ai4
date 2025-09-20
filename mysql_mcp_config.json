@@ -1,0 +1,109 @@
+{
+  "server": {
+    "name": "mysql-mcp-server",
+    "version": "1.0.0",
+    "description": "MySQL数据库分析工具"
+  },
+  "tools": [
+    {
+      "name": "connect_database",
+      "description": "连接到MySQL数据库",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "数据库主机地址"
+          },
+          "port": {
+            "type": "integer",
+            "description": "数据库端口"
+          },
+          "username": {
+            "type": "string",
+            "description": "数据库用户名"
+          },
+          "password": {
+            "type": "string",
+            "description": "数据库密码"
+          },
+          "database": {
+            "type": "string",
+            "description": "数据库名称"
+          }
+        },
+        "required": ["host", "port", "username", "password", "database"]
+      }
+    },
+    {
+      "name": "execute_query",
+      "description": "执行SQL查询",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "要执行的SQL查询语句"
+          },
+          "parameters": {
+            "type": "object",
+            "description": "查询参数",
+            "default": {}
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "get_table_info",
+      "description": "获取表信息",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "table_name": {
+            "type": "string",
+            "description": "表名"
+          }
+        },
+        "required": ["table_name"]
+      }
+    },
+    {
+      "name": "analyze_database",
+      "description": "分析数据库结构和数据",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_type": {
+            "type": "string",
+            "description": "分析类型: structure(结构), data(数据), all(全部)",
+            "enum": ["structure", "data", "all"]
+          }
+        },
+        "required": ["analysis_type"]
+      }
+    }
+  ],
+  "resources": [
+    {
+      "uri": "mysql://database/schema",
+      "description": "数据库模式信息"
+    },
+    {
+      "uri": "mysql://database/tables",
+      "description": "数据库表信息"
+    },
+    {
+      "uri": "mysql://database/stats",
+      "description": "数据库统计信息"
+    }
+  ],
+  "connection": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "username": "root",
+    "password": "sw63828",
+    "database": "lotto_3d",
+    "charset": "utf8mb4"
+  }
+}

@@ -11,10 +11,7 @@ import streamlit as st
 from db.connection import query_db
 from utils.cache import cached_query
 from utils.charts import render_digit_frequency_chart
-from utils.data_access import (
-    fetch_lottery_info,
-    fetch_playtypes,
-)
+from utils.data_access import fetch_lottery_info, fetch_playtypes
 from utils.numbers import match_prediction_hit, normalize_code, parse_tokens
 from utils.sql import make_in_clause
 

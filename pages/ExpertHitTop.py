@@ -6,9 +6,7 @@ import streamlit as st
 
 from db.connection import query_db
 from utils.cache import cached_query
-from utils.data_access import (
-    fetch_playtypes_for_issue,
-)
+from utils.data_access import fetch_playtypes_for_issue
 from utils.sql import make_in_clause
 from utils.ui import issue_picker, playtype_picker, render_open_info
 

@@ -7,7 +7,6 @@ import pandas as pd
 import streamlit as st
 
 from db.connection import query_db
-from utils.cache import cached_query
 from utils.data_access import (
     fetch_lottery_infos,
     fetch_playtypes,

@@ -465,95 +465,95 @@ if st.button("📥 执行筛选并查询推荐"):
         issue_predictions["user_id"] = issue_predictions["user_id"].astype(int)
         issue_predictions["digit_set"] = issue_predictions["numbers"].apply(extract_digit_set)
 
-            number_conditions_payload: list[dict[str, object]] = []
-            for cond in st.session_state["filter_conditions"]:
-                digits = [d for d in cond.get("numbers", []) if d]
-                playtypes = [int(pid) for pid in cond.get("playtypes", []) if pid is not None]
-                if not digits or not playtypes:
-                    continue
-                mode = cond.get("mode", "包含") or "包含"
-                match_mode = cond.get("match_mode", "全部匹配") or "全部匹配"
-                if mode == "不包含":
-                    match_mode = "全部匹配"
-                if match_mode == "任意包含":
-                    match_mode = "任意匹配"
-                number_conditions_payload.append(
-                    {
-                        "digits": digits,
-                        "playtypes": playtypes,
-                        "mode": mode,
-                        "match": match_mode,
-                    }
-                )
-
-            number_users = users_matching_number_conditions(
-                issue_predictions, number_conditions_payload
-            )
-
-            hit_conditions_payload: list[dict[str, object]] = []
-            for cond in st.session_state["hit_conditions"]:
-                playtype_value = cond.get("playtype")
-                if playtype_value is None:
-                    continue
-                mode = cond.get("mode", "上期命中") or "上期命中"
-                payload: dict[str, object] = {
-                    "playtype": int(playtype_value),
+        number_conditions_payload: list[dict[str, object]] = []
+        for cond in st.session_state["filter_conditions"]:
+            digits = [d for d in cond.get("numbers", []) if d]
+            playtypes = [int(pid) for pid in cond.get("playtypes", []) if pid is not None]
+            if not digits or not playtypes:
+                continue
+            mode = cond.get("mode", "包含") or "包含"
+            match_mode = cond.get("match_mode", "全部匹配") or "全部匹配"
+            if mode == "不包含":
+                match_mode = "全部匹配"
+            if match_mode == "任意包含":
+                match_mode = "任意匹配"
+            number_conditions_payload.append(
+                {
+                    "digits": digits,
+                    "playtypes": playtypes,
                     "mode": mode,
+                    "match": match_mode,
                 }
-                if mode == "近N期命中M次":
-                    payload["recent_n"] = int(cond.get("recent_n", 5) or 5)
-                    payload["expected"] = int(cond.get("hit_n", 3) or 3)
-                    op_value = cond.get("op", "≥") or "≥"
-                    op_map = {"≥": ">=", "=": "=", ">": ">", "<": "<", "<=": "<="}
-                    payload["operator"] = op_map.get(op_value, ">=")
-                else:
-                    payload["recent_n"] = int(cond.get("recent_n", 5) or 5)
-                    payload["expected"] = int(cond.get("hit_n", 1) or 1)
-                    payload["operator"] = cond.get("op", ">=") or ">="
-                hit_conditions_payload.append(payload)
-
-            hit_users = (
-                users_matching_hit_conditions(
-                    hit_conditions_payload,
-                    issues,
-                    issue_name,
-                    playtype_map,
-                )
-                if hit_conditions_payload
-                else None
             )
 
-            final_users = set(number_users)
-            if hit_conditions_payload:
-                if not hit_users:
-                    st.info("命中特征条件无满足用户。")
-                    final_users = set()
-                else:
-                    final_users &= hit_users
+        number_users = users_matching_number_conditions(
+            issue_predictions, number_conditions_payload
+        )
 
-            if not final_users:
+        hit_conditions_payload: list[dict[str, object]] = []
+        for cond in st.session_state["hit_conditions"]:
+            playtype_value = cond.get("playtype")
+            if playtype_value is None:
+                continue
+            mode = cond.get("mode", "上期命中") or "上期命中"
+            payload: dict[str, object] = {
+                "playtype": int(playtype_value),
+                "mode": mode,
+            }
+            if mode == "近N期命中M次":
+                payload["recent_n"] = int(cond.get("recent_n", 5) or 5)
+                payload["expected"] = int(cond.get("hit_n", 3) or 3)
+                op_value = cond.get("op", "≥") or "≥"
+                op_map = {"≥": ">=", "=": "=", ">": ">", "<": "<", "<=": "<="}
+                payload["operator"] = op_map.get(op_value, ">=")
+            else:
+                payload["recent_n"] = int(cond.get("recent_n", 5) or 5)
+                payload["expected"] = int(cond.get("hit_n", 1) or 1)
+                payload["operator"] = cond.get("op", ">=") or ">="
+            hit_conditions_payload.append(payload)
+
+        hit_users = (
+            users_matching_hit_conditions(
+                hit_conditions_payload,
+                issues,
+                issue_name,
+                playtype_map,
+            )
+            if hit_conditions_payload
+            else None
+        )
+
+        final_users = set(number_users)
+        if hit_conditions_payload:
+            if not hit_users:
+                st.info("命中特征条件无满足用户。")
+                final_users = set()
+            else:
+                final_users &= hit_users
+
+        if not final_users:
+            clear_cached_result()
+            st.warning("⚠️ 没有符合条件的推荐记录")
+        else:
+            target_df = issue_predictions[
+                (issue_predictions["playtype_id"] == int(target_playtype_id))
+                & (issue_predictions["user_id"].isin(final_users))
+            ][["user_id", "numbers"]].copy()
+
+            if target_df.empty:
                 clear_cached_result()
                 st.warning("⚠️ 没有符合条件的推荐记录")
             else:
-                target_df = issue_predictions[
-                    (issue_predictions["playtype_id"] == int(target_playtype_id))
-                    & (issue_predictions["user_id"].isin(final_users))
-                ][["user_id", "numbers"]].copy()
-
-                if target_df.empty:
-                    clear_cached_result()
-                    st.warning("⚠️ 没有符合条件的推荐记录")
-                else:
-                    open_info = fetch_lottery_info(issue_name) or {}
-                    nick_map = fetch_expert_names(sorted(final_users))
-                    st.session_state["uefp_result"] = {
-                        "issue_name": issue_name,
-                        "target_playtype_name": target_playtype_name,
-                        "records": target_df,
-                        "user_ids": sorted(final_users),
-                        "open_info": open_info,
-                        "nick_map": nick_map,
-                    }
+                open_info = fetch_lottery_info(issue_name) or {}
+                nick_map = fetch_expert_names(sorted(final_users))
+                st.session_state["uefp_result"] = {
+                    "issue_name": issue_name,
+                    "target_playtype_name": target_playtype_name,
+                    "records": target_df,
+                    "user_ids": sorted(final_users),
+                    "open_info": open_info,
+                    "nick_map": nick_map,
+                }
 
 if "uefp_result" in st.session_state:
     cached = st.session_state["uefp_result"]

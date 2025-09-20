@@ -176,7 +176,9 @@ def fetch_lottery_info(issue: str, ttl: int | None = 120) -> dict[str, object] |
     return rows[0] if rows else None
 
 
-def fetch_lottery_infos(issues: Sequence[str], ttl: int | None = 120) -> dict[str, dict[str, object]]:
+def fetch_lottery_infos(
+    issues: Sequence[str], ttl: int | None = 120
+) -> dict[str, dict[str, object]]:
     if not issues:
         return {}
     placeholders = ", ".join([":issue_" + str(idx) for idx in range(len(issues))])
